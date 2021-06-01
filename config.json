@@ -1,0 +1,12 @@
+{
+  "BatteryCapacity": 800,
+  "ChargedVoltage": 0,
+  "TailCurrent": 40,
+  "ChargedDetectTime": 3,
+  "ChargeEfficiency": null,
+  "PeukertCoefficient": 125,
+  "CurrentThreshold": null,
+  "TimeToGoDelta": null,
+  "RelayLowSOC": null,
+  "RelayLowSOCClear": null
+}
