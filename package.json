@@ -1,9 +1,9 @@
 {
-  "name": "XXSXXSXzy",
+  "name": "BMV_terminal",
   "version": "0.0.1",
   "description": "Terminal control for Victron Battery management",
   "main": "bmv-terminal.js",
-  "_repository": {
+  "repository": {
     "type": "git",
     "url": "https://github.com/MarkusRJK/victron-terminal.git"
   },
