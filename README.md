@@ -15,16 +15,21 @@ switch to the display of history values.
 ### Installation
 
 ```
-npm init
-npm install git+https://git@github.com/MarkusRJK/victron-terminal.git --save
+git clone https://github.com/MarkusRJK/victron-terminal.git
+cd victron-terminal
+npm install
+npm start...
 ```
 
-
 ### Usage
+
 Run 
 
 ```
 $ npm start 
 ```
 
+### Restrictions
 
+The BMV is terribly slow. It can take minutes until a command is executed
+or until the confirmation returns.

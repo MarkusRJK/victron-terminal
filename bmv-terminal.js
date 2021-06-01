@@ -201,6 +201,9 @@ function displayCurrentAndHistory() {
     var v3 = 56; // third  vertical position
     var h  = 2;
 
+    // TODO: slow ==> remove
+    term.clear();
+
     term.moveTo(v1, h, "BMV type: ");
     term.brightBlue(bmvdata.productId.formatted());
     term.moveTo(v2, h, "%s: %f", bmvdata.version.shortDescr, bmvdata.version.formatted() );
@@ -251,7 +254,7 @@ function displayCurrentAndHistory() {
     term.moveTo(v3, h++, "%s: %s", bmvdata.maxAuxVoltage.shortDescr, bmvdata.maxAuxVoltage.formattedWithUnit());
 
     term.moveTo(v1, h,   clearStr);
-//    term.moveTo(v2, h++, "%s: %s   " , bmvdata.topVoltage.shortDescr, bmvdata.topVoltage.formattedWithUnit()) ;
+    term.moveTo(v2, h++, "%s: %s   " , bmvdata.topVoltage.shortDescr, bmvdata.topVoltage.formattedWithUnit()) ;
 
     term.moveTo(v1, h, clearStr);
 
@@ -328,6 +331,9 @@ function displayConfiguration() {
     var v2 = 30; // second vertical position
     var v3 = 56; // third  vertical position
     var h  = 2;
+
+    // TODO: slow ==> remove
+    term.clear();
 
     term.moveTo(v1, h,   clearStr);
     term.moveTo(v1, h++, "%s: %s", bmvdata.capacity.shortDescr, bmvdata.capacity.formattedWithUnit());

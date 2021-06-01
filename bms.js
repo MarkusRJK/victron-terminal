@@ -38,51 +38,64 @@ function getPercentualSOC(soc) {
     return getInRange(soc, 0.0, 100.0);
 }
 
+const minutesToMS = 60 * 1000;
 
+// singleton class Alarm
 class Alarm {
     constructor(historyLength, silenceInMinutes) {
-	this.alarmHistory = null;
-	if (historyLength === null)
-	    this.historyLength = 20;
-	else
-	    this.historyLength = historyLength;
-	if (silenceInMinutes === null)
-	    this.silenceInMS = 5 * 60 * 1000; // 5 minutes - in milliseconds
-	else
-	    this.silenceInMS = silenceInMinutes * 60 * 1000;
+        if(! Alarm.instance){
+	    this.alarmHistory = [];
+	    if (historyLength)
+		this.historyLength = 20; // default
+	    else
+		this.historyLength = historyLength;
+	    if (silenceInMinutes)
+		this.silenceInMS = 5 * minutesToMS; // 5 minutes - in milliseconds
+	    else
+		this.silenceInMS = silenceInMinutes * minutesToMS;
+            Alarm.instance = this;
+        }
+        return Alarm.instance;
     }
 
+    // try to reduce to historyLength, yet keep all active alarms
     reduce() {
 	if (this.alarmHistory.length <= this.historyLength) return;
 	for (let id = 0; id < this.alarmHistory.length - this.historyLength; ++id)
 	    if (! this.alarmHistory[id].isActive) delete this.alarmHistory[id];
     }
 
-    persist() {
-	// TODO: use JSON write to array of objects
+    persistJSON() {
+	return this.alarmHistory;
     }
 
-    raiseLow(failureText, actionText) {
+    // \param separator is ',' for CSV
+    persistPlain(separator) {
+	return this.alarmHistory.map(a => function(a) {
+	    let levelTxt;
+	    switch (a.level) {
+		case 0: levelTxt = 'low'; break;
+		case 1: levelTxt = 'medium'; break;
+		case 2: levelTxt = 'high'; break;
+	    }
+	    return a.time      + separator +
+		   levelTxt    + separator +
+	           a.failure   + separator +
+		   a.action    + separator +
+		   a.isAckn    + separator +
+		   a.isActive  + separator +
+		   a.isAudible + '\n';
+	});
+    }
+
+    raise(l, failureText, actionText) {
 	let alarm = { time     : new Date(),
+		      level    : l,
 		      failure  : failureText,
 		      action   : actionText,
 		      isAckn   : false,
 		      isActive : true,
-		      isAudible: false
-		    };
-	this.alarmHistory.push(alarm);
-	this.reduce();
-	this.persist();
-    }
-
-    raiseHigh(failureText, actionText) {
-	// switch on Auditible alarm
-	let alarm = { time     : new Date(),
-		      failure  : failureText,
-		      action   : actionText,
-		      isAckn   : false,
-		      isActive : true,
-		      isAudible: true
+		      isAudible: (l >= 1)
 		    };
 	this.alarmHistory.push(alarm);
 	this.reduce();
@@ -121,75 +134,116 @@ class Alarm {
 	    if (this.alarmHistory[id].isActive) return true;
 	return false;
     }
-    
 }
 
-// consumes the flow and checks for violation of safe conditions
-class Protection {
-    constructor(config, actor) {
-	// read config file
-	fs.readFile(config, 'utf8', (err, data) => {
-            if (err) {
-                //logger.error(`cannot read: ${filename} (${err.code === 'ENOENT' ? 'does not exist' : 'is not readable'})`);
-                console.log(`cannot read: ${filename} (${err.code === 'ENOENT' ? 'does not exist' : 'is not readable'})`);
-                console.log(err.stack);
-            } else {
-                //logger.debug("Parse configuration (JSON format)");
-                // charge characteristics data
-                let conf = JSON.parse(data);
-                this.maxChargeCurrent = conf.maxChargeCurrent; // 45A
-                this.maxLoadCurrent = conf.maxLoadCurrent; // 150A
-		this.minVoltage = conf.minVoltage; // 12V
-		this.smallLoadCurrent = conf.smallLoadCurrent; // 8A
-		this.maxPanelVoltage = conf.maxPanelVoltage; // 34V
-            }
-        });
 
+
+
+// consumes the flow and checks for violation of safe conditions
+// Battery flow protection:
+// lower battery protection
+// upper battery protection:  same
+// Charger flow protection:
+// Charger load protection:
+// Protection / Alarm if BMV alarm
+// protection / alarm if PVvoltage above 32 and current <= 0 (Ladestrom)
+class FlowProtection {
+    // \param config file in JSON containing Alarms and Protection settings
+    // \param actor is the victron control
+    constructor(name, config, alarm, actor) {
+	// TODO: protect against non-defined values => defaults
+
+	this.config = config;
+	this.alarm = alarm;
 	this.actor = actor;
-	this.alarm = new Alarm();
     }
 
     setFlow(flow) {
-	let I  = flow.getCurrent(); // FIXME: U and I in SI units?
-	let UL = flow.getLowerVoltage(); // FIXME: flow should be current and upper / lower voltage
-	let UU = flow.getUpperVoltage();
-	if (I > Math.abs(this.maxChargeCurrent)) {
-	    this.actor.setRelay(1);
-	    this.alarm.raiseLow("Charging current too high: " + str(I), 
+	let I = flow.getCurrent(); // FIXME: U and I in SI units?
+	let U = flow.getVoltage(); // FIXME: flow should be current and upper / lower voltage
+
+	if (I < this.config.absMinCurrent) {
+	    this.alarm.raise(this.config.alarmLevel, name + ": too much load " + str(I) + "A",
+				"Removing load from battery");
+	    this.actor.setRelay(0);
+	}
+	if (I > this.config.absMaxCurrent) {
+	    this.alarm.raise(this.config.alarmLevel, name + ": high charge current " + str(I) + "A", 
 				"Switching load on battery");
+	    this.actor.setRelay(1);
 	}
-	if (I < -Math.abs(this.maxLoadCurrent)) {
-	    this.actor.setRelay(0);
-	    this.alarm.raiseLow("Load too high: " + str(I),
-				"Removing load from battery");
-	}
-	if (UL < this.minVoltage && I < this.smallLoadCurrent) {
-	    this.actor.setRelay(0);
-	    this.alarm.raiseLow("Battery capacity too low; lower voltage drop to "
-			     + str(UL) + " for small current " + str(I),
+	if (U < this.config.minVoltage && I < this.config.whenCurrentBelow) {
+	    this.alarm.raise(this.config.alarmLevel, name
+			     + ": battery capacity too low; voltage drop to "
+			     + str(U) + "V for small current " + str(I) + "A",
 			     "Removing load from battery");
-	}
-	if (UU < this.minVoltage && I < this.smallLoadCurrent) {
 	    this.actor.setRelay(0);
-	    this.alarm.raiseLow("Battery capacity too low; upper voltage drop to "
-				+ str(UU) + " for small current " + str(I),
-				"Removing load from battery");
+	}
+	if (U < this.config.maxVoltage && I < this.config.whenCurrentAbove) {
+	    this.alarm.raise(this.config.alarmLevel, name + ": battery capacity too high; voltage "
+				+ str(U) + "V and charging at " + str(I) + "A",
+				"Switching load on battery");
+	    this.actor.setRelay(1);
 	}
 	// if (PanelVoltage > this.maxPanelVoltage) {
 	//     this.actor.setRelay(0);
-	//     this.alarm.raiseLow("Panel voltage too high: " + str(PanelVoltage),
+	//     this.alarm.raise(this.config.alarmLevel, ("Panel voltage too high: " + str(PanelVoltage),
 	//                         "Switching load on battery");
 	// }
 	// if (I < -5 && isInRange(UL + UU, 0, 12.5) && PanelVoltage > 32 && this.actor.getRelay() === 0) {
 	//     // no action possible
-	//     this.alarm.raiseHigh("Battery discharging although capacity left and sun is out",
+	//     this.alarm.raise(1, "Battery discharging although capacity left and sun is out",
 	//                         "Disconnect MPPT controller");
 	// }
     }
 
 }
 
+function readCfg(config) {
+    // read config file
+    // TODO: use promise
+    fs.readFile(config, 'utf8', (err, data) => {
+        if (err) {
+            //logger.error(`cannot read: ${filename} (${err.code === 'ENOENT' ? 'does not exist' : 'is not readable'})`);
+            console.log(`cannot read: ${filename} (${err.code === 'ENOENT' ? 'does not exist' : 'is not readable'})`);
+            console.log(err.stack);
+        } else {
+            //logger.debug("Parse configuration (JSON format)");
+            // charge characteristics data
+    	    // TODO: protect against non-defined values => defaults
+            let config = JSON.parse(data);
 
+	    //let config = readCfg('app.json')
+	    let alarm = new Alarm(config.Alarms.history, config.Alarms.silenceInMin);
+	    let protectionPolicies = [];
+	    let lowerBattProtectionLP = new FlowProtection('Bottom battery' , config.BatteryProtectionLowPriority, alarm, module.exports.BMSinstance);
+	    protectionPolicies.push(lowerBattProtectionLP);
+	    let lowerBattProtectionHP = new FlowProtection('Bottom battery' , config.BatteryProtectionHighPriority, alarm, module.exports.BMSinstance);
+	    protectionPolicies.push(lowerBattProtectionHP);
+	    let upperBattProtectionLP = new FlowProtection('Top battery' , config.BatteryProtectionLowPriority, alarm, module.exports.BMSinstance);
+	    protectionPolicies.push(upperBattProtectionLP);
+	    let upperBattProtectionHP = new FlowProtection('Top battery' , config.BatteryProtectionHighPriority, alarm, module.exports.BMSinstance)
+	    protectionPolicies.push(upperBattProtectionHP);
+	    // TODO: actor behaviour makes sense for charger + load???
+	    let chargerProtectionLP = new FlowProtection('Charger' , config.ChargerProtectionLowPriority, alarm, module.exports.BMSinstance);
+	    protectionPolicies.push(chargerProtectionLP);
+	    let chargerProtectionHP = new FlowProtection('Charger' , config.ChargerProtectionHighPriority, alarm, module.exports.BMSinstance)
+	    protectionPolicies.push(chargerProtectionHP);
+	    let chargerLoadProtectionLP = new FlowProtection('Charger load' , config.ChargerLoadProtectionLowPriority, alarm, module.exports.BMSinstance);
+	    protectionPolicies.push(chargerLoadProtectionLP);
+	    let chargerLoadProtectionHP = new FlowProtection('Charger load' , config.ChargerLoadProtectionHighPriority, alarm, module.exports.BMSinstance)
+	    protectionPolicies.push(chargerLoadProtectionHP);
+        }
+    });
+}
+
+function protect(flow) {
+    protectionPolicies.map(p => p.setFlow(flow));
+}
+
+
+
+// currents and voltages in SI units
 class Flow {
 
     // minCurrent, maxCurrent and currents in/output to/from setCurrent and getCurrent
@@ -849,13 +903,23 @@ class VEdeviceSerialAccu extends VEdeviceClass {
         // if there is a change in these dependencies
         bmvdata.upperVoltage.on.push(
             (newValue, oldValue, packageArrivalTime, key) => {
-                bmvdata.topVoltage.newValue = newValue - bmvdata.midVoltage.value;
-                this.rxtx.updateCacheObject('topVoltage', bmvdata.topVoltage);
+		if (bmvdata.topVoltage.newValue !== null) return;
+		let midVoltage = bmvdata.midVoltage.newValue;
+		// if updateCacheObject was called for midVoltage then newValue is null
+		if (midVoltage === null) midVoltage = bmvdata.midVoltage.value;
+                bmvdata.topVoltage.newValue = newValue - midVoltage;
+                // TODO: add returned object to changeObjects
+		this.rxtx.updateCacheObject('topVoltage', bmvdata.topVoltage);
             }
         );
         bmvdata.midVoltage.on.push(
             (newValue, oldValue, packageArrivalTime, key) => {
-                bmvdata.topVoltage.newValue = bmvdata.upperVoltage.value - newValue;
+		if (bmvdata.topVoltage.newValue !== null) return;
+		let upperVoltage = bmvdata.upperVoltage.newValue;
+		// if updateCacheObject was called for midVoltage then newValue is null
+		if (upperVoltage === null) upperVoltage = bmvdata.upperVoltage.value;
+                bmvdata.topVoltage.newValue = upperVoltage - newValue;
+                // TODO: add returned object to changeObjects
                 this.rxtx.updateCacheObject('topVoltage', bmvdata.topVoltage);
             }
         );

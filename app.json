@@ -1,0 +1,63 @@
+{
+    'Alarms' : {
+	'history'      : 20,
+	'silenceInMin' : 5
+    },
+    'BatteryProtectionLowPriority' : {
+	'alarmLevel'       : 0,
+	'absMinCurrent'    : -130, 
+	'absMaxCurrent'    : 38,
+	'minVoltage'       : 12,
+	'whenCurrentBelow' : 2,
+	'maxVoltage'       : 14,
+	'whenCurrentAbove' : 1
+    }
+    'BatteryProtectionHighPriority' : {
+	'alarmLevel'       : 2,
+	'absMinCurrent'    : -150, 
+	'absMaxCurrent'    : 45,
+	'minVoltage'       : 11.5,
+	'whenCurrentBelow' : 2,
+	'maxVoltage'       : 14.5,
+	'whenCurrentAbove' : 1
+    }
+    'ChargerProtectionLowPriority' : {
+	'alarmLevel'       : 0,
+	'absMinCurrent'    : -15, 
+	'absMaxCurrent'    : 40,
+	'minVoltage'       : 24,
+	'whenCurrentBelow' : 2,
+	'maxVoltage'       : 33,
+	'whenCurrentAbove' : 4
+    }
+    'ChargerProtectionHighPriority' : {
+	'alarmLevel'       : 2,
+	'absMinCurrent'    : -20, 
+	'absMaxCurrent'    : 45,
+	'minVoltage'       : 23,
+	'whenCurrentBelow' : 2,
+	'maxVoltage'       : 35,
+	'whenCurrentAbove' : 4
+    }
+    'ChargerLoadProtectionLowPriority' : {
+	'alarmLevel'       : 0,
+	'absMinCurrent'    : -15, 
+	'absMaxCurrent'    : 1,
+	'minVoltage'       : 24,
+	'whenCurrentBelow' : 2,
+	'maxVoltage'       : 27,
+	'whenCurrentAbove' : 0
+    }
+    'ChargerLoadProtectionHighPriority' : {
+	'alarmLevel'       : 2,
+	'absMinCurrent'    : -20, 
+	'absMaxCurrent'    : 1,
+	'minVoltage'       : 23
+	'whenCurrentBelow' : 2,
+	'maxVoltage'       : 29,
+	'whenCurrentAbove' : 16.5
+    }
+}
+
+
+
