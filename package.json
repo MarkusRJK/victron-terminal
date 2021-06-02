@@ -1,6 +1,6 @@
 {
-  "name": "__BMX_terminal__",
-  "version": "0.0.1",
+  "name": "BMV_terminal",
+  "version": "0.0.2",
   "description": "Terminal control for Victron Battery management",
   "main": "bmv-terminal.js",
   "repository": {

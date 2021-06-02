@@ -40,16 +40,16 @@ var bmvdata = {};
 
 function startBMS() {
     try {
-	console.log("trying to start vedirect");
-	vedirect.start();
-	console.log("success starting vedirect");
+        console.log("trying to start vedirect");
+        vedirect.start();
+        console.log("success starting vedirect");
     }
     catch(err)
     {
-	//logger.debug(err);
-	console.log(err);
-	console.log("deferring to start vedirect");
-	setTimeout(startBMS, 2000)
+        //logger.debug(err);
+        console.log(err);
+        console.log("deferring to start vedirect");
+        setTimeout(startBMS, 2000)
     }
 }
 startBMS();
@@ -75,27 +75,27 @@ function getStoredAh()
 function getAccumulatedSOC(soc, deltaAhSinceLast)
 {
     if (bmvdata.capacity.value === undefined
-	|| bmvdata.capacity.value === null
-	|| bmvdata.capacity.value === 0)
+        || bmvdata.capacity.value === null
+        || bmvdata.capacity.value === 0)
     {
-	logger.warn("getAccumulatedSOC: Capacity missing");
-	return null;
+        logger.warn("getAccumulatedSOC: Capacity missing");
+        return null;
     }
     if (soc === undefined)
     {
-	logger.warn("getAccumulatedSOC: SOC missing");
-	return null;
+        logger.warn("getAccumulatedSOC: SOC missing");
+        return null;
     }
     soc = soc * 0.01; // convert from % to float
     let lastAh = soc * bmvdata.capacity.formatted();
     let currentAh = lastAh + deltaAhSinceLast;
     let socNew = Math.max(Math.min(currentAh / bmvdata.capacity.formatted() * 100.0, 100.0), 0.0);
     if (deltaAhSinceLast != 0)
-	logger.debug("deltaAhsincelast: " + deltaAhSinceLast
-		     + "  soc: " + soc
-		     + "  lastAH: " + lastAh
-		     + "  currentAh: " + currentAh
-		     + "  new soc: " + socNew);
+        logger.debug("deltaAhsincelast: " + deltaAhSinceLast
+                     + "  soc: " + soc
+                     + "  lastAH: " + lastAh
+                     + "  currentAh: " + currentAh
+                     + "  new soc: " + socNew);
     return socNew;
 }
 
@@ -108,91 +108,101 @@ function getBestEstimateTopSOC(current)
     let deltaAhSinceLast = getStoredAh();
     if (deltaAhSinceLast === null)
     {
-	deltaAhSinceLast = lastStoredAh;
-	logger.warn("Stored Ah not yet available");
+        deltaAhSinceLast = lastStoredAh;
+        logger.warn("Stored Ah not yet available");
     }
     let isAccumulating = true;
     // positive if the battery got charged, negative if it got discharged
     if (deltaAhSinceLast !== null && lastStoredAh !== null && lastStoredAh !== undefined)
-	deltaAhSinceLast -= lastStoredAh;
+        deltaAhSinceLast -= lastStoredAh;
     else
     {
-	if (deltaAhSinceLast === null) logger.warn("deltaAhSinceLast is null");
-	if (lastStoredAh === null) logger.warn("lastStoredAh is null");
-	if (lastStoredAh === undefined) logger.warn("lastStoredAh is undefined");
+        if (deltaAhSinceLast === null) logger.warn("deltaAhSinceLast is null");
+        if (lastStoredAh === null) logger.warn("lastStoredAh is null");
+        if (lastStoredAh === undefined) logger.warn("lastStoredAh is undefined");
 
-	deltaAhSinceLast = 0;
-	isAccumulating = false;
-	logger.warn("Cannot accumulate");
+        deltaAhSinceLast = 0;
+        isAccumulating = false;
+        logger.warn("Cannot accumulate");
     }
     if (deltaAhSinceLast != 0)
-	logger.debug("lastTopSOC and deltaAhSinceLast = " + lastTopSOC + "  " + deltaAhSinceLast);
+        logger.debug("lastTopSOC and deltaAhSinceLast = " + lastTopSOC + "  " + deltaAhSinceLast);
     let topSOC = getAccumulatedSOC(lastTopSOC, deltaAhSinceLast);
     logger.debug("topSOC = " + topSOC);
     let voltage = 1.955 * 6;
 //    if (bmvdata.topVoltage.value !== null) voltage = bmvdata.topVoltage.formatted();
     if (topSOC === null)
-	topSOC = estimate_SOC(voltage);
+        topSOC = estimate_SOC(voltage);
     //logger.info("current: " + current + "  maxNullcurrentth: " + maxNullCurrentThreshold);
     if (Math.abs(current) < maxNullCurrentThreshold
         || lastTopSOC === undefined || lastStoredAh === undefined || lastStoredAh === null
         || topSOC === 0 || topSOC >= 100)
     {
-	lastTopSOC = estimate_SOC(voltage);
-	lastStoredAh = getStoredAh();
-	if (isAccumulating && topSOC != lastTopSOC)
-	    logger.debug("diff between accumulated top SOC (" + topSOC + ") and null-current SOC ("
-		     + lastTopSOC + ") is: " + (topSOC - lastTopSOC));
-	topSOC = lastTopSOC;
+        lastTopSOC = estimate_SOC(voltage);
+        lastStoredAh = getStoredAh();
+        if (isAccumulating && topSOC != lastTopSOC)
+            logger.debug("diff between accumulated top SOC (" + topSOC + ") and null-current SOC ("
+                     + lastTopSOC + ") is: " + (topSOC - lastTopSOC));
+        topSOC = lastTopSOC;
     }
     return topSOC;
 }
-	
+        
 function getBestEstimateBottomSOC(current)
 {
     let deltaAhSinceLast = getStoredAh();
     if (deltaAhSinceLast === null)
     {
-	deltaAhSinceLast = lastStoredAh;
-	logger.warn("Stored Ah not yet available");
+        deltaAhSinceLast = lastStoredAh;
+        logger.warn("Stored Ah not yet available");
     }
     let isAccumulating = true;
     // positive if the battery got charged, negative if it got discharged
     if (deltaAhSinceLast !== null && lastStoredAh !== null && lastStoredAh !== undefined)
-	deltaAhSinceLast -= lastStoredAh;
+        deltaAhSinceLast -= lastStoredAh;
     else
     {
-	if (deltaAhSinceLast === null)      logger.warn("deltaAhSinceLast is null");
-	if (lastStoredAh     === null)      logger.warn("lastStoredAh is null");
-	if (lastStoredAh     === undefined) logger.warn("lastStoredAh is undefined");
+        if (deltaAhSinceLast === null)      logger.warn("deltaAhSinceLast is null");
+        if (lastStoredAh     === null)      logger.warn("lastStoredAh is null");
+        if (lastStoredAh     === undefined) logger.warn("lastStoredAh is undefined");
 
-	deltaAhSinceLast = 0;
-	isAccumulating = false;
-	logger.warn("Cannot accumulate");
+        deltaAhSinceLast = 0;
+        isAccumulating = false;
+        logger.warn("Cannot accumulate");
     }
     let bottomSOC = getAccumulatedSOC(lastBottomSOC, deltaAhSinceLast)
     let voltage = 1.955 * 6;
     if (bmvdata.midVoltage.value !== null) voltage = bmvdata.midVoltage.formatted();
     if (bottomSOC === null)
-	bottomSOC = estimate_SOC(voltage);
+        bottomSOC = estimate_SOC(voltage);
     //logger.info("current: " + current + "  maxNullcurrentth: " + maxNullCurrentThreshold);
     if (Math.abs(current) < maxNullCurrentThreshold
         || lastBottomSOC === undefined || lastStoredAh === undefined || lastStoredAh === null
         || bottomSOC === 0 || bottomSOC >= 100)
     {
-	lastBottomSOC = estimate_SOC(voltage);
-	lastStoredAh = getStoredAh();
-	if (isAccumulating && bottomSOC != lastBottomSOC)
-	    logger.debug("diff between accumulated bottom SOC (" + bottomSOC + ") and null-current SOC ("
-		     + lastBottomSOC + ") is: " + (bottomSOC - lastBottomSOC));
-	bottomSOC = lastBottomSOC;
+        lastBottomSOC = estimate_SOC(voltage);
+        lastStoredAh = getStoredAh();
+        if (isAccumulating && bottomSOC != lastBottomSOC)
+            logger.debug("diff between accumulated bottom SOC (" + bottomSOC + ") and null-current SOC ("
+                     + lastBottomSOC + ") is: " + (bottomSOC - lastBottomSOC));
+        bottomSOC = lastBottomSOC;
     }
     return bottomSOC;
 }
-	
-var menu1 = "(A)larm (B)oot (D)ownload Cfg (L)og current (P)ing (R)elay"
-var menu2 = "(S)OC (T)oggle screen (U)pload Cfg (V)ersion (Ctrl-C) Exit";
+        
+var menu1 = "(A)larm (B)oot (D)ownload Cfg (L)og current (P)ing (R)elay";
+var menu2 = "(H)istory of alarms";
+var menu3 = "(S)OC (T)oggle screen (U)pload Cfg (V)ersion (Ctrl-C) Exit";
 var minSOC;
+
+function displayAlarms() {
+    term.clear();
+    var v1 = 2;  // first vertical position
+    var h  = 2;
+    
+    term.moveTo(v1, h++, "Alarm History:");
+    term.moveTo(v1, h, "%s", vedirect.listAlarms());
+}
 
 function displayCurrentAndHistory() {
     var clearStr = "                                              ";
@@ -214,10 +224,10 @@ function displayCurrentAndHistory() {
     term.moveTo(v1 , h,   clearStr) ;
     term.moveTo(v1,  h,   "%s: ", bmvdata.alarmState.shortDescr);
     if (bmvdata.alarmState.value === "OFF") {
-	term.green(bmvdata.alarmState.value);
+        term.green(bmvdata.alarmState.value);
     }
     else {
-	term.brightRed(bmvdata.alarmState.value);
+        term.brightRed(bmvdata.alarmState.value);
     }
     term.moveTo(v2,  h,   "%s: %s", bmvdata.relayState.shortDescr, bmvdata.relayState.value);
     term.moveTo(v3 , h++, "Accu Alarm: (%d) ", bmvdata.alarmReason.value) ;
@@ -260,23 +270,28 @@ function displayCurrentAndHistory() {
 
     let current = maxNullCurrentThreshold + 1;
     if (bmvdata.batteryCurrent.value !== null && bmvdata.batteryCurrent.value !== undefined)
-	current = bmvdata.batteryCurrent.formatted();
+        current = bmvdata.batteryCurrent.formatted();
 
     //let topSOC    = getBestEstimateTopSOC(current).toFixed(1);
     //let bottomSOC = getBestEstimateBottomSOC(current).toFixed(1);
     let topSOC    = vedirect.getLowerSOC();
     let bottomSOC = vedirect.getUpperSOC();
-    
-    if (topSOC && bottomSOC)
-	minSOC = Math.min(topSOC, bottomSOC);
 
+    try {
+        if (topSOC && bottomSOC && (typeof topSOC === 'number') && (typeof bottomSOC === 'number'))
+            minSOC = Math.min(topSOC, bottomSOC);
+    }
+    catch (err) {
+        console.log(err);
+        minSOC = 0;
+    }
     if ((isNaN(bmvdata.stateOfCharge.value)) || bmvdata.stateOfCharge.value * 0.1 > 100
         || bmvdata.stateOfCharge.value * 0.1 < 0)
-	if (minSOC) vedirect.setStateOfCharge(minSOC);
+        if (minSOC) vedirect.setStateOfCharge(minSOC);
 
     if (minSOC && Math.abs(bmvdata.stateOfCharge.value * 0.1 - minSOC) >=1)
     {
-	vedirect.setStateOfCharge(minSOC);
+        vedirect.setStateOfCharge(minSOC);
     }
     term.moveTo(v1, h,     "%s: %s %  " , "SOC lower", bottomSOC);
     term.moveTo(v2, h,     "SOC: %s  " , bmvdata.stateOfCharge.formattedWithUnit() ) ;
@@ -321,6 +336,7 @@ function displayCurrentAndHistory() {
     h++; // empty line
     term.moveTo(v1, h++, menu1);
     term.moveTo(v1, h++, menu2);
+    term.moveTo(v1, h++, menu3);
 
     term.moveTo( 0 , 0 , "") ;
 }
@@ -365,6 +381,7 @@ function displayConfiguration() {
     h++; // empty line
     term.moveTo(v1, h++, menu1);
     term.moveTo(v1, h++, menu2);
+    term.moveTo(v1, h++, menu3);
 
     term.moveTo( 0 , 0 , "") ;
 }
@@ -373,7 +390,7 @@ function displayConfiguration() {
 // Dispersion parameter
 class StatisticObject {
     constructor() {
-	this.reset();
+        this.reset();
     }
 
     reset() {
@@ -397,20 +414,20 @@ class StatisticObject {
     
     print(log)
     {
-	var minimum   = 0;
+        var minimum   = 0;
         var average   = 0;
         var varianz   = 0;
         if (this.counter != 0)
         {
-	    minimum   = this.min;
+            minimum   = this.min;
             average   = Math.floor(this.runningAvg / this.counter);
             varianz   = Math.floor(this.runningVar / this.counter);
         }
         log.write(
               minimum + '\t'
-	    + average  + '\t'
-	    + this.max + '\t'
-	    + varianz);
+            + average  + '\t'
+            + this.max + '\t'
+            + varianz);
     }
 }
 
@@ -428,11 +445,11 @@ function log_buckets(current)
     var newHour = date.getHours();
     if (newHour !== hour)
     {
-	if (newHour == 0)
-	{
-	   current_log.write(date.toLocaleString());
-	   current_log.write('\n');
-	}
+        if (newHour == 0)
+        {
+           current_log.write(date.toLocaleString());
+           current_log.write('\n');
+        }
         current_log.write(hour + '\t');
         chargeCurrent.print(current_log);
         current_log.write('\t');
@@ -448,7 +465,7 @@ function log_buckets(current)
     }
     else
     {
-	current = -current;
+        current = -current;
         drawCurrent.update(current);
     }
 }
@@ -470,14 +487,14 @@ function estimate_SOC(volt, current)
         if (current == undefined || nullCounter >= 5) // for 5 * 3 secs
         {
             volt = volt / 6.0;
-	    var diff = maxCellVoltage - minCellVoltage;
-	    SOC = Math.min(100.0, 100.0 * (volt - minCellVoltage) / diff);
-	    SOC = Math.max(0.0, SOC);
+            var diff = maxCellVoltage - minCellVoltage;
+            SOC = Math.min(100.0, 100.0 * (volt - minCellVoltage) / diff);
+            SOC = Math.max(0.0, SOC);
         }
     }
     else 
     {
-  	nullCounter = 0;
+        nullCounter = 0;
     }
     return SOC;
 }
@@ -507,24 +524,24 @@ var displayinterval = setInterval(function () {
     // topSOC or bottomSOC being undefined means that the current is too high
     if (topSOC !== undefined && bottomSOC !== undefined)
     {
-	topSOC    = Math.round(topSOC);
-	bottomSOC = Math.round(bottomSOC);
-	if (topSOC != lastTopSOC || bottomSOC != lastBottomSOC)
-	{
+        topSOC    = Math.round(topSOC);
+        bottomSOC = Math.round(bottomSOC);
+        if (topSOC != lastTopSOC || bottomSOC != lastBottomSOC)
+        {
             var date = new Date();
-	    //soc_log.write(date.toLocaleString('en-GB', { timeZone: 'UTC' }) + n'\t' + "top SOC: " + topSOC + '\t' + "bottom SOC: " + bottomSOC + '\n');
-	    soc_log.write(date.toLocaleString() + '\t'
-			  + "current: " + current + '\t'
-//			  + "top V: " +  topVoltage + '\t'
-			  + "top SOC: " + topSOC
-			  + " (" + (topSOC - lastTopSOC) + ")" + '\t'
-			  + "bottom V: " + midVoltage + '\t'
-			  + "bottom SOC: " + bottomSOC
-			  + " (" + (bottomSOC - lastBottomSOC) + ")" + '\n');
-	    //lastTopSOC = topSOC;
-	    //lastBottomSOC = bottomSOC;
-	    //lastStoredAh = getStoredAh();
-	}
+            //soc_log.write(date.toLocaleString('en-GB', { timeZone: 'UTC' }) + n'\t' + "top SOC: " + topSOC + '\t' + "bottom SOC: " + bottomSOC + '\n');
+            soc_log.write(date.toLocaleString() + '\t'
+                          + "current: " + current + '\t'
+//                        + "top V: " +  topVoltage + '\t'
+                          + "top SOC: " + topSOC
+                          + " (" + (topSOC - lastTopSOC) + ")" + '\t'
+                          + "bottom V: " + midVoltage + '\t'
+                          + "bottom SOC: " + bottomSOC
+                          + " (" + (bottomSOC - lastBottomSOC) + ")" + '\n');
+            //lastTopSOC = topSOC;
+            //lastBottomSOC = bottomSOC;
+            //lastStoredAh = getStoredAh();
+        }
     }
     //process.stdout.write(topSOC);
     //process.stdout.write(bottomSOC);
@@ -536,21 +553,21 @@ var readDeviceConfig = function()
     logger.trace("readDeviceConfig");
     const file = __dirname + '/config.json';
     fs.readFile(file, 'utf8', (err, data) => {
-	if (err) {
-	    logger.error(`cannot read: ${file} (${err.code === 'ENOENT' ? 'does not exist' : 'is not readable'})`);
+        if (err) {
+            logger.error(`cannot read: ${file} (${err.code === 'ENOENT' ? 'does not exist' : 'is not readable'})`);
         } else {
-	    logger.debug("Parse configuration (JSON format)");
-	    let config = JSON.parse(data);
-	    vedirect.setBatteryCapacity(config.BatteryCapacity);
-	    vedirect.setChargedVoltage(config.ChargedVoltage);
-	    vedirect.setTailCurrent(config.TailCurrent);
-	    vedirect.setChargedDetectTime(config.ChargedDetectTime);
-	    vedirect.setChargeEfficiency(config.ChargeEfficiency);
-	    vedirect.setPeukertCoefficient(config.PeukertCoefficient);
-	    vedirect.setCurrentThreshold(config.CurrentThreshold);
-	    vedirect.setTimeToGoDelta(config.TimeToGoDelta);
-	    vedirect.setRelayLowSOC(config.RelayLowSOC);
-	    vedirect.setRelayLowSOCClear(config.RelayLowSOCClear);
+            logger.debug("Parse configuration (JSON format)");
+            let config = JSON.parse(data);
+            vedirect.setBatteryCapacity(config.BatteryCapacity);
+            vedirect.setChargedVoltage(config.ChargedVoltage);
+            vedirect.setTailCurrent(config.TailCurrent);
+            vedirect.setChargedDetectTime(config.ChargedDetectTime);
+            vedirect.setChargeEfficiency(config.ChargeEfficiency);
+            vedirect.setPeukertCoefficient(config.PeukertCoefficient);
+            vedirect.setCurrentThreshold(config.CurrentThreshold);
+            vedirect.setTimeToGoDelta(config.TimeToGoDelta);
+            vedirect.setRelayLowSOC(config.RelayLowSOC);
+            vedirect.setRelayLowSOCClear(config.RelayLowSOCClear);
         }
     });
 }
@@ -568,89 +585,93 @@ term.on( 'key' , ( name , matches , data ) => {
     term.clear();
 
     if ( name === 'CTRL_C' ) {
-	vedirect.stop();
-	terminate() ;
+        vedirect.stop();
+        terminate() ;
     }
     name = name.toUpperCase()
     if ( name === 'R' )
     {
-	term.clear();
-	//term.moveto(20, 10);
-	let relayOnOff = 0;
-	if (bmvdata.relayState.value !== "OFF") relayOnOff = 1;
-	if (relayOnOff == 1) {
-	    term.green('Switch relay off');
-	    vedirect.setRelay(0);
-	}
-	else {
-	    term.green('Switch relay on');
-	    vedirect.setRelay(1);
-	}
+        term.clear();
+        //term.moveto(20, 10);
+        let relayOnOff = 0;
+        if (bmvdata.relayState.value !== "OFF") relayOnOff = 1;
+        if (relayOnOff == 1) {
+            term.green('Switch relay off');
+            vedirect.setRelay(0);
+        }
+        else {
+            term.green('Switch relay on');
+            vedirect.setRelay(1);
+        }
     }
     else if ( name === 'S' )
     {
-	term.green('Set SOC ' + minSOC + ' %');
- 	vedirect.setStateOfCharge(minSOC);
+        term.green('Set SOC ' + minSOC + ' %');
+        vedirect.setStateOfCharge(minSOC);
     }
     else if ( name === 'P' )
     {
-	term.green('Ping');
- 	vedirect.ping();
+        term.green('Ping');
+        vedirect.ping();
     }
     else if ( name === 'V' )
     {
-	term.green('App Version');
- 	vedirect.app_version();
+        term.green('App Version');
+        vedirect.app_version();
     }
     else if ( name === 'A' )
     {
-	term.clear();
-	//term.moveto(20, 10);
-	// if (alarmOnOff == 0) {
-	     term.green('Alarm acknowledged');
-	     vedirect.clearAlarm();
-	//     alarmOnOff = 1;
-	// }
-	// else {
-	//     term.green('Switch alarm on');
-	//     vedirect.setAlarm();
-	//     alarmOnOff = 0;
-	// }
+        term.clear();
+        //term.moveto(20, 10);
+        // if (alarmOnOff == 0) {
+             term.green('Alarm acknowledged');
+             vedirect.clearAlarm();
+        //     alarmOnOff = 1;
+        // }
+        // else {
+        //     term.green('Switch alarm on');
+        //     vedirect.setAlarm();
+        //     alarmOnOff = 0;
+        // }
     }
     else if ( name === 'B' )
     {
-	term.red('Restarting');
-	vedirect.restart();
+        term.red('Restarting');
+        vedirect.restart();
     }
     else if ( name === 'D' )
     {
-	term.yellow('Downloading configuration');
-	vedirect.getDeviceConfig(true);
+        term.yellow('Downloading configuration');
+        vedirect.getDeviceConfig(true);
     }
     else if ( name === 'U' )
     {
-	term.yellow('Uploading configuration');
-	readDeviceConfig();
+        term.yellow('Uploading configuration');
+        readDeviceConfig();
     }
     else if ( name === 'T' )
     {
-	if (displayFunction == displayConfiguration)
-	    displayFunction = displayCurrentAndHistory;
-	else
-	    displayFunction = displayConfiguration;
+        if (displayFunction !== displayCurrentAndHistory)
+            displayFunction = displayCurrentAndHistory;
+        else
+            displayFunction = displayConfiguration;
+    }
+    else if ( name === 'H' )
+    {
+        displayFunction = displayAlarms;
     }
     else if ( name === 'L' )
     {
-	if (vedirect.hasListener('batteryCurrent'))
-	{
-	    term.yellow('Stop Logging current');
-	    vedirect.registerListener('batteryCurrent', null);
-	}
-	else
-	{
-	    term.yellow('Start Logging current');
-	    vedirect.registerListener('batteryCurrent', currentListener);
-	}
+        if (vedirect.hasListener('batteryCurrent'))
+        {
+            term.yellow('Stop Logging current');
+            vedirect.registerListener('batteryCurrent', null);
+        }
+        else
+        {
+            term.yellow('Start Logging current');
+            vedirect.registerListener('batteryCurrent', currentListener);
+        }
     }
 } ) ;
 

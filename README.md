@@ -18,7 +18,6 @@ switch to the display of history values.
 git clone https://github.com/MarkusRJK/victron-terminal.git
 cd victron-terminal
 npm install
-npm start...
 ```
 
 ### Usage
