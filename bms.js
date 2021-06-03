@@ -5,6 +5,8 @@ var logger = require( 've_bms_forecast' ).logger;
 const interpolate = require('everpolate').linear;
 var fs = require('fs');
 const Math = require('mathjs');
+const MPPTclient = require('tracer').MPPTDataClient;
+let mppt = new MPPTclient(0);
 
 // extend standard Array by unique function
 Array.prototype.unique = function() {
@@ -18,7 +20,7 @@ Array.prototype.unique = function() {
     return a;
 };
 
-function isNumber(value) 
+function isNumber(value)
 {
     return typeof value === 'number'; // && isFinite(value);
 }
@@ -92,7 +94,7 @@ class Alarm {
         // activeAlarms = this.alarmHistory.filter(a => a.isActive === true)
 
         let output = "\n";
-        for (let i = 0; i < this.alarmHistory.length; ++i) 
+        for (let i = 0; i < this.alarmHistory.length; ++i)
             output += this.formatAlarm(this.alarmHistory[i], separator);
         return output;
     }
@@ -137,7 +139,7 @@ class Alarm {
             if (this.alarmHistory[id].isAudible) return true;
         return false;
     }
-    
+
     isAnyActive() {
         for (let id = 0; id < this.alarmHistory.length; ++id)
             if (this.alarmHistory[id].isActive) return true;
@@ -169,22 +171,22 @@ class FlowProtection {
         if (I <= this.config.absMinCurrent) {
             this.alarm.raise(this.config.alarmLevel, this.name + ": too much load " + Istr,
                                 "Removing load from battery");
-            this.actor.setRelay(0);
+            if (this.config.alarmLevel === 2) this.actor.setRelay(0);
         }
         if (I >= this.config.absMaxCurrent) {
-            this.alarm.raise(this.config.alarmLevel, this.name + ": high charge current " + Istr, 
+            this.alarm.raise(this.config.alarmLevel, this.name + ": high charge current " + Istr,
                                 "Switching load on battery");
-            this.actor.setRelay(1);
+            if (this.config.alarmLevel === 2) this.actor.setRelay(1);
         }
         if (U <= this.config.minVoltage && I <= this.config.whenCurrentBelow) {
             this.alarm.raise(this.config.alarmLevel, this.name + ": battery capacity too low; voltage drop to " + Ustr + " for small current " + Istr,
                              "Removing load from battery");
-            this.actor.setRelay(0);
+            if (this.config.alarmLevel === 2) this.actor.setRelay(0);
         }
         if (U >= this.config.maxVoltage && I >= this.config.whenCurrentAbove) {
             this.alarm.raise(this.config.alarmLevel, this.name + ": battery capacity too high; voltage " + Ustr + " and charging at " + Istr,
                                 "Switching load on battery");
-            this.actor.setRelay(1);
+            if (this.config.alarmLevel === 2) this.actor.setRelay(1);
         }
     }
 }
@@ -241,7 +243,7 @@ class Flow {
             this.newVoltage    = null;
         }
     }
-    
+
     // \param current in a scale such that current * scaleCurrent results in ampers
     //        rather than milli ampers or so
     setCurrent(current) {
@@ -284,7 +286,7 @@ class Flow {
 
 class RestingCharacteristic
 {
-    // Gel Battery:  
+    // Gel Battery:
     // 12.0V 12.00 11.76 11.98  0%
     // 12.2V 12.25 12.00        25%
     // 12.3V 12.40 12.30 12.40  50%
@@ -491,13 +493,13 @@ class FloatChargeCharacteristic {
     //          you must specify 6 for the number of cells.
     //          As your current is measured for the total system,
     //          you must specify the capacity of the total system
-    //          which is 800Ah. 
+    //          which is 800Ah.
     //
     // \param fc a specification of the float charge characteristic
     //        containing 3 objects: current, voltage, SOC each of
     //        which contains an array of timestamps in hours
     //        and associated measurements of currents, voltages and
-    //        SOCs. 
+    //        SOCs.
     // \param cells is n (number of cells daisy chained in series)
     // \param capacity is the total capacity of all cells in parallel
     constructor(fc, cells, capacity) {
@@ -514,11 +516,11 @@ class FloatChargeCharacteristic {
         let tmp      = fc.current.hours.concat(fc.voltage.hours).unique();
         this.timeTags = tmp.concat(fc.SOC.hours).unique();
         this.timeTags.sort(function(a, b){return a - b});
-        
+
         this.I  = interpolate(this.timeTags, fc.current.hours, fc.current.I);
         this.U  = interpolate(this.timeTags, fc.voltage.hours, fc.voltage.U);
         // capacity in percent
-        this.CP = interpolate(this.timeTags, fc.SOC.hours,     fc.SOC.percent); 
+        this.CP = interpolate(this.timeTags, fc.SOC.hours,     fc.SOC.percent);
         let cellCapacityScale = cells / capacity;
         this.R = this.U.map(function (u, idx) {
             return cellCapacityScale * u / this.I[idx];
@@ -527,7 +529,7 @@ class FloatChargeCharacteristic {
         this.simpleCalcReduceAh(cells, capacity);
         this.convResistanceToSOC(cells, capacity);
         this.calcResistanceToReduceAh(cells, capacity);
-        
+
         console.log("i, I(i), U(i), CP(i)");
         this.I.map(function(i, idx) {
             console.log(idx + ", " + i + ", " + this.U[idx] + ", " + this.CP[idx]);
@@ -540,7 +542,7 @@ class FloatChargeCharacteristic {
         this.simplefAh.map(function(f, idx) {
             console.log(idx + ", " + f);
         });
-                
+
         // FIXME: do we still need isOperational since getSOC calls can come in earlier
         // it may take a while till charge_characteristic.json is read
         if (this.resistance.length === 0 || this.soc.length === 0 || this.reduceAh.length === 0)
@@ -564,9 +566,9 @@ class FloatChargeCharacteristic {
             }
         }
     }
-    
+
     // \brief create function R -> SOC(R)
-    convResistanceToSOC(cells, capacity) {      
+    convResistanceToSOC(cells, capacity) {
         if (this.R.length > 0 && this.CP.length > 0) {
             this.resistance.push(this.R[0]);
             this.soc.push(this.CP[0]);
@@ -587,11 +589,11 @@ class FloatChargeCharacteristic {
     //         time (Ah) will show more charge volume than
     //         reality. Reading the charge characteristic
     //         during a small duration deltaT=t_1-t_0 the
-    //         current deltaI flow into the battery. 
+    //         current deltaI flow into the battery.
     //         Ideally this would add a volume of
     //         deltaI * deltaT.
     //         However, the charge characteristic states
-    //         that the SOC(t_1)-SOC(t_0) * nominalCapacity 
+    //         that the SOC(t_1)-SOC(t_0) * nominalCapacity
     //         = deltaSOC * nominalCapacity is less.
     //         Calculating the function
     //         (with C_n = nominalCapacity):
@@ -678,13 +680,13 @@ class FloatChargeCharacteristic {
                 // a = (a+factor) * 0.5;
                 // this.reduceAh[this.reduceAh.length-1] = a;
             }
-        }       
+        }
     }
 
     isApplicable(flow) {
         return this.isOperational && flow.getCurrent() > 0;
     }
-    
+
     getSOC(flow) {
         let current = flow.getCurrent();
         let voltage = flow.getVoltage();
@@ -746,7 +748,7 @@ class FloatVolume {
         } else if (this.dischargeChar.isApplicable(flow)) {
             this.characteristic = this.disChargeChar;
         }
-    }    
+    }
 
     initIntegrator(flow, timeInSec) {
         // initialize integrator with first flow:
@@ -778,7 +780,7 @@ class FloatVolume {
 
         // Integral volume:
         this.integrator.addCurrent(flow.getCurrent(), timeInSec);
-        
+
         // Synchronisation of two volume estimation methods:
         // FIXME: what is the final volume now?
         if (estimatedVolume > this.integrator.getUpperIntegral()) {
@@ -884,13 +886,13 @@ class VEdeviceSerialAccu extends VEdeviceClass {
                 this.rxtx.updateCacheObject('topVoltage', bmvdata.topVoltage);
             }
         );
-        // bmvdata.topSOC          = createObject(1,  "%", "Top SOC", {'formatter' : function() 
+        // bmvdata.topSOC          = createObject(1,  "%", "Top SOC", {'formatter' : function()
         // {
         //      let topSOC    = estimate_SOC(bmvdata.topVoltage.formatted());
         //      topSOC = Math.round(topSOC * 100) / 100;
         //      return topSOC;
         // }});
-        // bmvdata.bottomSOC      = createObject(1,  "%", "Bottom SOC", {'formatter' : function() 
+        // bmvdata.bottomSOC      = createObject(1,  "%", "Bottom SOC", {'formatter' : function()
         // {
         //      let bottomSOC = estimate_SOC(bmvdata.midVoltage.formatted());
         //      bottomSOC = Math.round(bottomSOC * 100) / 100;
@@ -1007,6 +1009,8 @@ class BMS extends VEdeviceSerialAccu {
         this.setShowTemperature(0);
         this.setShowPower(0);
         this.setShowConsumedAh(0);
+
+        this.createMPPTobjects();
     }
 
     readConfig(filename) {
@@ -1019,7 +1023,7 @@ class BMS extends VEdeviceSerialAccu {
         logger.debug("BMS:: Parse configuration (JSON format)");
         // TODO: protect against non-defined values => defaults
         this.appConfig = JSON.parse(data);
-        
+
         let fc = this.appConfig.floatcharge;
 
         // The measured Voltage in this process nominal 12 V for the upper and nominal 12 V
@@ -1041,18 +1045,16 @@ class BMS extends VEdeviceSerialAccu {
         if (!this.bottomBattProtectionLP || !this.bottomBattProtectionHP
             || ! this.topBattProtectionLP || !this.topBattProtectionHP) return;
 
-        this.bottomBattProtectionLP.setFlow(this.bottomFlow);
-        this.bottomBattProtectionHP.setFlow(this.bottomFlow);
-        this.topBattProtectionLP.setFlow(this.topFlow);
-        this.topBattProtectionHP.setFlow(this.topFlow);
-
-        // testing:
-        this.bottomFlow.setCurrent(10);
-        this.bottomFlow.setVoltage(14);
-        logger.debug('bottom flow: ' + this.bottomFlow.getCurrent() + 'A, ' + this.bottomFlow.getVoltage() + 'V');
-        this.bottomBattProtectionLP.setFlow(this.bottomFlow);
+	if (this.bottomFlow.getVoltage() !== 0) {
+            this.bottomBattProtectionLP.setFlow(this.bottomFlow);
+            this.bottomBattProtectionHP.setFlow(this.bottomFlow);
+	}
+	if (this.topFlow.getVoltage() !== 0) {
+            this.topBattProtectionLP.setFlow(this.topFlow);
+            this.topBattProtectionHP.setFlow(this.topFlow);
+	}
     }
-    
+
     setMidVoltage(newVoltage, oldVoltage, timeStamp, key) {
         logger.trace("BMS::setMidVoltage");
         let voltage = newVoltage * this.ntuFactorLVoltage; // => in volts
@@ -1092,7 +1094,7 @@ class BMS extends VEdeviceSerialAccu {
         this.topFlow.setCurrent(current);
 
         this.protectFlow();
-        
+
         let time = timeStamp * 0.001; // converts from milliseconds to SI (seconds)
         //this.lowerIncCapacity.add(this.bottomFlow.getCurrent(), time);
         //this.upperIncCapacity.add(this.topFlow.getCurrent(), time);
@@ -1128,8 +1130,45 @@ class BMS extends VEdeviceSerialAccu {
             return this.alarms.persistPlain('\t');
         else return "No alarms";
     }
+
+    createMPPTobjects() {
+        let bmvdata = this.update();
+
+        bmvdata.MPPTbatteryVoltage     = this.createObject(1,  "V", "MPPT Batt. Voltage");
+        bmvdata.MPPTpvVoltage          = this.createObject(1,  "V", "MPPT PV Voltage");
+        bmvdata.MPPTloadCurrent        = this.createObject(1,  "A", "MPPT Load Current");
+        bmvdata.MPPTisOverload         = this.createObject(1,  "", "MPPT Overloaded");
+        bmvdata.MPPTisShortcutLoad     = this.createObject(1,  "", "MPPT Load Shortcut");
+        bmvdata.MPPTisBatteryOverload  = this.createObject(1,  "", "MPPT Batt. Overloaded");
+        bmvdata.MPPTisOverDischarge    = this.createObject(1,  "", "MPPT Over Discharged");
+        bmvdata.MPPTisFullIndicator    = this.createObject(1,  "", "MPPT Batt. Full");
+        bmvdata.MPPTisCharging         = this.createObject(1,  "", "MPPT Charging");
+        bmvdata.MPPTbatteryTemperature = this.createObject(1,  "C", "MPPT Batt. Temp.");
+        bmvdata.MPPTchargingCurrent    = this.createObject(1,  "A", "MPPT Charge Current");
+    }
 }
 
 
-module.exports.BMSInstance = new BMS();
+setInterval(function () {
+    mppt.requestData();
+    let data = mppt.getData();
 
+    if (! data || ! data.batteryVoltage ) return; // no data yet
+    if (! module.exports.BMSInstance) return;
+    
+    let bmvdata = module.exports.BMSInstance.update();
+    bmvdata.MPPTbatteryVoltage.newValue     = data.batteryVoltage;
+    bmvdata.MPPTpvVoltage.newValue          = data.PvVoltage;
+    bmvdata.MPPTloadCurrent.newValue        = data.loadCurrent;
+    bmvdata.MPPTisOverload.newValue         = data.isOverload;
+    bmvdata.MPPTisShortcutLoad.newValue     = data.isLoadShortCircuit;
+    bmvdata.MPPTisBatteryOverload.newValue  = data.isBatteryOverload;
+    bmvdata.MPPTisOverDischarge.newValue    = data.isOverDischarge;
+    bmvdata.MPPTisFullIndicator.newValue    = data.isFullIndicator;
+    bmvdata.MPPTisCharging.newValue         = data.chargingIndicator;
+    bmvdata.MPPTbatteryTemperature.newValue = data.batteryTemperature;
+    bmvdata.MPPTchargingCurrent.newValue    = data.chargingCurrent;
+}.bind(mppt), 2000); // every 2 seconds
+
+
+module.exports.BMSInstance = new BMS();

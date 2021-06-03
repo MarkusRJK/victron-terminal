@@ -14,7 +14,6 @@ const vedirect = require( './bms' ).BMSInstance;
 var fs = require('fs');
 var log4js = require('log4js');
 
-
 //****************************************************
 // LOGGING
 
@@ -36,7 +35,6 @@ var avgBaseCurrentLowVoltage = 660; // mA
 var inverterBaseCurrent = 5590 - avgBaseCurrentLowVoltage; // mA
 
 var bmvdata = {};
-
 
 function startBMS() {
     try {
@@ -191,7 +189,7 @@ function getBestEstimateBottomSOC(current)
 }
         
 var menu1 = "(A)larm (B)oot (D)ownload Cfg (L)og current (P)ing (R)elay";
-var menu2 = "(H)istory of alarms";
+var menu2 = "(H)istory of alarms (M)PPT";
 var menu3 = "(S)OC (T)oggle screen (U)pload Cfg (V)ersion (Ctrl-C) Exit";
 var minSOC;
 
@@ -377,6 +375,37 @@ function displayConfiguration() {
 
     term.moveTo(v1, h,   clearStr);
     term.moveTo(v1, h++, "%s: %s", bmvdata.relayLowSOCClear.shortDescr, bmvdata.relayLowSOCClear.formattedWithUnit());
+
+    h++; // empty line
+    term.moveTo(v1, h++, menu1);
+    term.moveTo(v1, h++, menu2);
+    term.moveTo(v1, h++, menu3);
+
+    term.moveTo( 0 , 0 , "") ;
+}
+
+
+function displayMPPT() {
+    var clearStr = "                                              ";
+    var v1 = 2;  // first vertical position
+    var v2 = 30; // second vertical position
+    var v3 = 56; // third  vertical position
+    var h  = 2;
+
+    // TODO: slow ==> remove
+    term.clear();
+
+    term.moveTo(v1, h++, "%s: %s", bmvdata.MPPTbatteryVoltage.shortDescr, bmvdata.MPPTbatteryVoltage.formattedWithUnit());
+    term.moveTo(v1, h++, "%s: %s", bmvdata.MPPTpvVoltage.shortDescr, bmvdata.MPPTpvVoltage.formattedWithUnit());
+    term.moveTo(v1, h++, "%s: %s", bmvdata.MPPTchargingCurrent.shortDescr, bmvdata.MPPTchargingCurrent.formattedWithUnit());
+    term.moveTo(v1, h++, "%s: %s", bmvdata.MPPTloadCurrent.shortDescr, bmvdata.MPPTloadCurrent.formattedWithUnit());
+    term.moveTo(v1, h++, "%s: %s", bmvdata.MPPTbatteryTemperature.shortDescr, bmvdata.MPPTbatteryTemperature.formattedWithUnit());
+    term.moveTo(v1, h++, "%s: %s", bmvdata.MPPTisOverload.shortDescr, bmvdata.MPPTisOverload.formattedWithUnit());
+    term.moveTo(v1, h++, "%s: %s", bmvdata.MPPTisShortcutLoad.shortDescr, bmvdata.MPPTisShortcutLoad.formattedWithUnit());
+    term.moveTo(v1, h++, "%s: %s", bmvdata.MPPTisBatteryOverload.shortDescr, bmvdata.MPPTisBatteryOverload.formattedWithUnit());
+    term.moveTo(v1, h++, "%s: %s", bmvdata.MPPTisOverDischarge.shortDescr, bmvdata.MPPTisOverDischarge.formattedWithUnit());
+    term.moveTo(v1, h++, "%s: %s", bmvdata.MPPTisFullIndicator.shortDescr, bmvdata.MPPTisFullIndicator.formattedWithUnit());
+    term.moveTo(v1, h++, "%s: %s", bmvdata.MPPTisCharging.shortDescr, bmvdata.MPPTisCharging.formattedWithUnit());
 
     h++; // empty line
     term.moveTo(v1, h++, menu1);
@@ -655,6 +684,10 @@ term.on( 'key' , ( name , matches , data ) => {
             displayFunction = displayCurrentAndHistory;
         else
             displayFunction = displayConfiguration;
+    }
+    else if ( name === 'M' )
+    {
+        displayFunction = displayMPPT;
     }
     else if ( name === 'H' )
     {

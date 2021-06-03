@@ -26,7 +26,8 @@
     "name": "Markus Kohler <Markus.Kohler@udo.edu>"
   },
   "scripts": {
-      "start": "screen -r || (screen -d -m -S solar nodejs bmv-terminal.js && screen -r)"
+      "start": "screen -r || (screen -m -S solar nodejs bmv-terminal.js)",
+      "postinstall": "mkdir -p node_modules/; git clone https://git@github.com/MarkusRJK/tracer.git -b javascript_client; mv tracer/javascript node_modules/tracer; rm -rf tracer"
   },
   "license": "MIT"
 }
