@@ -1,12 +1,16 @@
 // Battery Management System (BMS)
 
-var VEdeviceClass = require( 've_bms_forecast' ).VitronEnergyDevice;
+var VEdeviceClass = require( 've_bms_forecast' ).VictronEnergyDevice;
 var logger = require( 've_bms_forecast' ).logger;
 const interpolate = require('everpolate').linear;
 var fs = require('fs');
 const Math = require('mathjs');
 const MPPTclient = require('tracer').MPPTDataClient;
 let mppt = new MPPTclient(0);
+const Alarm = require('./protection.js').Alarm;
+const FlowProtection = require('./protection.js').FlowProtection;
+const ChargerOverheatProtection = require('./protection.js').ChargerOverheatProtection;
+
 
 // extend standard Array by unique function
 Array.prototype.unique = function() {
@@ -41,181 +45,6 @@ function getPercentualSOC(soc) {
     return getInRange(soc, 0.0, 100.0);
 }
 
-const minutesToMS = 60 * 1000;
-
-
-// singleton class Alarm
-class Alarm {
-    constructor(historyLength, silenceInMinutes) {
-        if(! Alarm.instance){
-            this.alarmHistory = [];
-            if (historyLength)
-                this.historyLength = 20; // default
-            else
-                this.historyLength = historyLength;
-            if (silenceInMinutes)
-                this.silenceInMS = 5 * minutesToMS; // 5 minutes - in milliseconds
-            else
-                this.silenceInMS = silenceInMinutes * minutesToMS;
-            Alarm.instance = this;
-        }
-        return Alarm.instance;
-    }
-
-    // try to reduce to historyLength, yet keep all active alarms
-    reduce() {
-        if (this.alarmHistory.length <= this.historyLength) return;
-        for (let id = 0; id < this.alarmHistory.length - this.historyLength; ++id)
-            if (! this.alarmHistory[id].isActive) delete this.alarmHistory[id];
-    }
-
-    persistJSON() {
-        return this.alarmHistory;
-    }
-
-    formatAlarm(a, separator) {
-        let levelTxt;
-        switch (a.level) {
-        case 0: levelTxt = 'low'; break;
-        case 1: levelTxt = 'medium'; break;
-        case 2: levelTxt = 'high'; break;
-        }
-        // add String(a.time)      + separator + with good format
-        return levelTxt + separator + a.failure + separator + a.action + '\n';
-    }
-
-    // \param separator is ',' for CSV, default is tab
-    persistPlain(separator) {
-        if (! separator) separator = '\t';
-
-        // see https://www.freecodecamp.org/news/javascript-array-of-objects-tutorial-how-to-create-update-and-loop-through-objects-using-js-array-methods/
-        // hpAlarms = this.alarmHistory.filter(a => a.level === 2)
-        // lpAlarms = this.alarmHistory.filter(a => a.level === 0)
-        // activeAlarms = this.alarmHistory.filter(a => a.isActive === true)
-
-        let output = "\n";
-        for (let i = 0; i < this.alarmHistory.length; ++i)
-            output += this.formatAlarm(this.alarmHistory[i], separator);
-        return output;
-    }
-
-    raise(l, failureText, actionText) {
-        let alarm = { time     : new Date(),
-                      level    : l,
-                      failure  : failureText,
-                      action   : actionText,
-                      isAckn   : false,
-                      isActive : true,
-                      isAudible: (l >= 1)
-                    };
-        this.alarmHistory.push(alarm);
-        this.reduce();
-        logger.error("ALARM: " + JSON.stringify(alarm));
-    }
-
-    acknowledge(id) {
-        this.alarmHistory[id].isAckn = true;
-    }
-
-    // silence temporary for 5 minutes at any time
-    silence(id) {
-        this.alarmHistory[id].isAudible = false;
-        setTimeout(function() {
-            this.alarmHistory[id].isAudible = true;
-        }.bind(this), this.silenceInMS);
-
-    }
-
-    // first acknowledge then clear
-    clear(id) {
-        if (this.alarmHistory[id].isAckn) {
-            this.alarmHistory[id].isActive  = false;
-            this.alarmHistory[id].isAudible = false;
-        }
-    }
-
-    isAnyAudible() {
-        for (let id = 0; id < this.alarmHistory.length; ++id)
-            if (this.alarmHistory[id].isAudible) return true;
-        return false;
-    }
-
-    isAnyActive() {
-        for (let id = 0; id < this.alarmHistory.length; ++id)
-            if (this.alarmHistory[id].isActive) return true;
-        return false;
-    }
-}
-
-
-
-
-// consumes the flow and checks for violation of safe conditions
-class FlowProtection {
-    // \param config file in JSON containing Alarms and Protection settings
-    // \param actor is the victron control
-    constructor(name, config, alarm, actor) {
-        logger.trace("FlowProtection::constructor");
-        this.name   = name
-        this.config = config;
-        this.alarm  = alarm;
-        this.actor  = actor;
-    }
-
-    setFlow(flow) {
-        let I = flow.getCurrent();
-        let U = flow.getVoltage();
-        let Istr = String(I) + "A";
-        let Ustr = String(U) + "V";
-
-        if (I <= this.config.absMinCurrent) {
-            this.alarm.raise(this.config.alarmLevel, this.name + ": too much load " + Istr,
-                                "Removing load from battery");
-            if (this.config.alarmLevel === 2) this.actor.setRelay(0);
-        }
-        if (I >= this.config.absMaxCurrent) {
-            this.alarm.raise(this.config.alarmLevel, this.name + ": high charge current " + Istr,
-                                "Switching load on battery");
-            if (this.config.alarmLevel === 2) this.actor.setRelay(1);
-        }
-        if (U <= this.config.minVoltage && I <= this.config.whenCurrentBelow) {
-            this.alarm.raise(this.config.alarmLevel, this.name + ": battery capacity too low; voltage drop to " + Ustr + " for small current " + Istr,
-                             "Removing load from battery");
-            if (this.config.alarmLevel === 2) this.actor.setRelay(0);
-        }
-        if (U >= this.config.maxVoltage && I >= this.config.whenCurrentAbove) {
-            this.alarm.raise(this.config.alarmLevel, this.name + ": battery capacity too high; voltage " + Ustr + " and charging at " + Istr,
-                                "Switching load on battery");
-            if (this.config.alarmLevel === 2) this.actor.setRelay(1);
-        }
-    }
-}
-
-
-
-// Protection / Alarm if BMV alarm
-// protection / alarm if PVvoltage above 32 and current <= 0 (Ladestrom)
-class ChargerOverheatProtection {
-    constructor(name, config, alarm, actor) {
-        this.name   = name
-        this.config = config;
-        this.alarm  = alarm;
-        this.actor  = actor;
-    }
-
-    setFlow(flow) {
-        let I = flow.getCurrent(); // FIXME: U and I in SI units?
-        let U = flow.getVoltage(); // FIXME: flow should be current and upper / lower voltage
-
-        if (U >= this.config.maxVoltage && I <= this.config.whenCurrentBelow) {
-            this.alarm.raise(this.config.alarmLevel, name + ": charger discharging; voltage "
-                                + str(U) + "V and charging at " + str(I) + "A",
-                                "Switching load on battery");
-            this.actor.setRelay(1);
-            // if possible: reset charger
-        }
-    }
-}
 
 
 
@@ -293,13 +122,11 @@ class RestingCharacteristic
     // 12.5V 12.60 12.55        75%
     // 12.8V 12.80 12.78 12.80 100%
     //               ^ am zuverlaessigsten
-    constructor() {
+    constructor(characteristic) {
         // taken the average of the above voltages
-        // TODO: read from file
-        this.voltage = [11.935, 12.15, 12.35, 12.55,  12.795];
-        this.soc     = [ 0.0,   25.0,  50.0,  75.0,  100.0];
-        // TODO: read from file
-        this.maxRestingCurrent = 0.05; // 50mA
+        this.voltage = characteristic.voltage;
+        this.soc     = characteristic.soc;
+        this.maxRestingCurrent = characteristic.maxRestingCurrent; // 50mA
     }
 
     isApplicable(flow) {
@@ -426,6 +253,7 @@ class Charge extends IntegralOverTime {
             currentTime = timeStamp;
         else
             currentTime = new Date(); // time in milliseconds since epoch
+	// FIXME: ntufactor now posibly wrong!!!
         this.add(current * this.ntuFactorCurrent, currentTime * 0.001);
     }
 }
@@ -535,6 +363,7 @@ class FloatChargeCharacteristic {
             console.log(idx + ", " + i + ", " + this.U[idx] + ", " + this.CP[idx]);
         }.bind(this));
         console.log("i, R(i), SOC(i), fAh(i)");
+	// FIXME: entry 19, 20, 21 of SOC(i) and fAh(i) contains undefined:
         this.R.map(function(r, idx) {
             console.log(idx + ", " + r + ", " + this.soc[idx] + ", " + this.reduceAh[idx]);
         }.bind(this));
@@ -860,41 +689,70 @@ class VEdeviceSerialAccu extends VEdeviceClass {
         // Demonstration how to create additional objects
         // and how to make them fire on update events:
         // map an additional component topVoltage
-        let bmvdata = this.update();
-        bmvdata.topVoltage = this.createObject(0.001,  "V", "Top Voltage");
+	// FIXME: which works reliably this.cache or bmvdata (which is not exported)
+        this.cache = this.update();
+	let bmvdata = this.update();
+        this.cache['topVoltage'] = this.createObject(0.001,  "V", "Top Voltage");
         // Make midVoltage and upperVoltage fire topVoltage's callback "on"
         // if there is a change in these dependencies
-        bmvdata.upperVoltage.on.push(
-            (newValue, oldValue, packageArrivalTime, key) => {
-                if (bmvdata.topVoltage.newValue !== null) return;
-                let midVoltage = bmvdata.midVoltage.newValue;
-                // if updateCacheObject was called for midVoltage then newValue is null
-                if (midVoltage === null) midVoltage = bmvdata.midVoltage.value;
-                bmvdata.topVoltage.newValue = newValue - midVoltage;
+        // bmvdata.upperVoltage.on.push(
+        //     ((newValue, oldValue, packageArrivalTime, key) => {
+        //         if (bmvdata.topVoltage.newValue !== null) return; // already updated by midVoltage
+        //         let midVoltage = bmvdata.midVoltage.newValue;
+        //         // if runOnFunction was called for midVoltage then newValue is null
+        //         if (midVoltage === null) midVoltage = bmvdata.midVoltage.value;
+        //         bmvdata.topVoltage.newValue = newValue - midVoltage;
+        //         // TODO: add returned object to changeObjects
+        //         this.rxtx.runOnFunction('topVoltage', bmvdata.topVoltage);
+        //     }).bind(this)
+        // );
+        // bmvdata.midVoltage.on.push(
+        //     ((newValue, oldValue, packageArrivalTime, key) => {
+        //         if (bmvdata.topVoltage.newValue !== null) return; // already updated by upperVoltage
+        //         let upperVoltage = bmvdata.upperVoltage.newValue;
+        //         // if runOnFunction was called for upperVoltage then newValue is null
+        //         if (upperVoltage === null) upperVoltage = bmvdata.upperVoltage.value;
+        //         bmvdata.topVoltage.newValue = upperVoltage - newValue;
+        //         // TODO: add returned object to changeObjects
+        //         this.rxtx.runOnFunction('topVoltage', bmvdata.topVoltage);
+        //     }).bind(this)
+        // );
+	// FIXME: topVoltage now displays negative (same absolute) after removing ntuFactors
+        this.cache.upperVoltage.on.push(
+            ((newValue, oldValue, packageArrivalTime, key) => {
+                if (this.cache.topVoltage.newValue !== null) return; // topValue already set
+                let midVoltage = this.cache.midVoltage.newValue;
+                // if runOnFunction was called for midVoltage then newValue is null
+                if (midVoltage === null) midVoltage = this.cache.midVoltage.value;
+		newValue = newValue / this.cache.upperVoltage.nativeToUnitFactor;
+		console.log('midVoltage: ' + midVoltage + '    upperVoltage: ' + newValue);
+                this.cache.topVoltage.newValue = newValue - midVoltage;
                 // TODO: add returned object to changeObjects
-                this.rxtx.updateCacheObject('topVoltage', bmvdata.topVoltage);
-            }
+		// FIXME: set dirty flag and run updateValuesAnd...() if dirty
+                this.rxtx.runOnFunction('topVoltage', this.cache.topVoltage);
+            }).bind(this)
         );
-        bmvdata.midVoltage.on.push(
-            (newValue, oldValue, packageArrivalTime, key) => {
-                if (bmvdata.topVoltage.newValue !== null) return;
-                let upperVoltage = bmvdata.upperVoltage.newValue;
-                // if updateCacheObject was called for midVoltage then newValue is null
-                if (upperVoltage === null) upperVoltage = bmvdata.upperVoltage.value;
-                bmvdata.topVoltage.newValue = upperVoltage - newValue;
+        this.cache.midVoltage.on.push(
+            ((newValue, oldValue, packageArrivalTime, key) => {
+                if (this.cache.topVoltage.newValue !== null) return; // topValue already set
+                let upperVoltage = this.cache.upperVoltage.newValue;
+                // if runOnFunction was called for upperVoltage then newValue is null
+                if (upperVoltage === null) upperVoltage = this.cache.upperVoltage.value;
+		newValue = newValue / this.cache.midVoltage.nativeToUnitFactor;
+                this.cache.topVoltage.newValue = upperVoltage - newValue;
                 // TODO: add returned object to changeObjects
-                this.rxtx.updateCacheObject('topVoltage', bmvdata.topVoltage);
-            }
+                this.rxtx.runOnFunction('topVoltage', this.cache.topVoltage);
+            }).bind(this)
         );
-        // bmvdata.topSOC          = createObject(1,  "%", "Top SOC", {'formatter' : function()
+        // this.cache.topSOC          = createObject(1,  "%", "Top SOC", {'formatter' : function()
         // {
-        //      let topSOC    = estimate_SOC(bmvdata.topVoltage.formatted());
+        //      let topSOC    = estimate_SOC(this.cache.topVoltage.formatted());
         //      topSOC = Math.round(topSOC * 100) / 100;
         //      return topSOC;
         // }});
-        // bmvdata.bottomSOC      = createObject(1,  "%", "Bottom SOC", {'formatter' : function()
+        // this.cache.bottomSOC      = createObject(1,  "%", "Bottom SOC", {'formatter' : function()
         // {
-        //      let bottomSOC = estimate_SOC(bmvdata.midVoltage.formatted());
+        //      let bottomSOC = estimate_SOC(this.cache.midVoltage.formatted());
         //      bottomSOC = Math.round(bottomSOC * 100) / 100;
         //      return bottomSOC;
         // }});
@@ -937,7 +795,7 @@ const scaleSecondsToHours = 1 / (60 * 60);
 // \class Battery Management System
 class BMS extends VEdeviceSerialAccu {
     constructor() {
-        logger.debug("BMS::constructor");
+        logger.trace("BMS::constructor");
         super();
 
         this.appConfig = null;
@@ -950,14 +808,16 @@ class BMS extends VEdeviceSerialAccu {
         this.bottomBattProtectionHP = null;
         this.topBattProtectionLP    = null;
         this.topBattProtectionHP    = null;
+	this.chargerProtectionLP    = null;
+        this.chargerProtectionHP    = null;
+        this.chargerLoadProtectionLP = null;
+        this.chargerLoadProtectionHP = null;
+        this.chargerOverheatProtectionHP = null;
 
         const filename = __dirname + '/app.json';
         this.readConfig(filename);
 
         let bmvdata = this.update();
-        this.ntuFactorCurrent  = bmvdata.batteryCurrent.nativeToUnitFactor;
-        this.ntuFactorUVoltage = bmvdata.topVoltage.nativeToUnitFactor;
-        this.ntuFactorLVoltage = bmvdata.midVoltage.nativeToUnitFactor;
 
         // device limitations of inverter and charger
         // TODO: read min/max from file
@@ -966,6 +826,7 @@ class BMS extends VEdeviceSerialAccu {
         this.bottomFlow  = new Flow();
         this.chargerFlow = new Flow();
         this.loadFlow    = new Flow();
+	this.pvFlow      = new Flow();
 
         // accu characteristics
         // TODO: read 200Ah from file
@@ -974,24 +835,12 @@ class BMS extends VEdeviceSerialAccu {
         this.bottomAccumulator = new Accumulator(2 * 200); // 2 accus in parallel like one 400Ah accu
         this.topAccumulator = new Accumulator(2 * 200); // 2 accus in parallel like one 400Ah accu
 
-        // let chargerProtectionLP = new FlowProtection('Charger' , this.appConfig.ChargerProtectionLowPriority, alarm, module.exports.BMSinstance);
-        // let chargerProtectionHP = new FlowProtection('Charger' , this.appConfig.ChargerProtectionHighPriority, alarm, module.exports.BMSinstance)
-        // let chargerLoadProtectionLP = new FlowProtection('Charger load' , this.appConfig.ChargerLoadProtectionLowPriority, alarm, module.exports.BMSinstance);
-        // let chargerLoadProtectionHP = new FlowProtection('Charger load' , this.appConfig.ChargerLoadProtectionHighPriority, alarm, module.exports.BMSinstance)
-        // let chargerOverheatProtectionHP = new ChargerOverheatProtection('Charger Overheat' , this.appConfig.ChargerOverheatProtectionHighPriority, alarm, module.exports.BMSinstance)
-
-        // function protect(flow) {
-        //     protectionPolicies.map(p => p.setFlow(flow));
-        // }
-
-        this.registerListener('midVoltage', this.setMidVoltage.bind(this));
-        this.registerListener('topVoltage', this.setTopVoltage.bind(this));
-
-        this.lowerRestingC = new RestingCharacteristic();
-        this.upperRestingC = new RestingCharacteristic();
-        // FIXME: temporary use RestingChara. until DischargeChar is defined
-        this.lowerDischargeC = new RestingCharacteristic();
-        this.upperDischargeC = new RestingCharacteristic();
+        // this.registerListener('midVoltage', this.setMidVoltage.bind(this));
+        // this.registerListener('topVoltage', this.setTopVoltage.bind(this));
+	// // FIXME: the following voltage should be the same as bmvdata.upperVoltage
+	// //        possible solution: average these voltages
+	// this.registerListener('MPPTbatteryVoltage', this.setAccuChainVoltage.bind(this));
+        // this.registerListener('MPPTpvVoltage', this.setPVVoltage.bind(this));
 
         this.topFloatVolume = new FloatVolume(this.topAccumulator, this.upperFloatC, this.upperDischargeC, this.upperRestingC);
         this.bottomFloatVolume = new FloatVolume(this.bottomAccumulator, this.lowerFloatC, this.lowerDischargeC, this.lowerRestingC);
@@ -1001,18 +850,24 @@ class BMS extends VEdeviceSerialAccu {
 
         // must be registered last because lower|upperFlow and
         // lower|upperIncCapacity must be instantiated before
-        this.registerListener('batteryCurrent', this.setCurrent.bind(this));
+        // this.registerListener('batteryCurrent', this.setCurrent.bind(this));
+        // this.registerListener('MPPTchargingCurrent', this.setChargingCurrent.bind(this));
+        // this.registerListener('MPPTloadCurrent', this.setLoadCurrent.bind(this));
 
+	this.registerListener('ChangeList', this.setFlows.bind(this));
 
-        // hide useless parameters in BMV display
+	this.hideBMVdisplayParams();
+        this.createMPPTobjects();
+    }
+
+    hideBMVdisplayParams() {
+        // hide 'useless' parameters in BMV display
         this.setShowTimeToGo(0);
         this.setShowTemperature(0);
         this.setShowPower(0);
         this.setShowConsumedAh(0);
-
-        this.createMPPTobjects();
     }
-
+    
     readConfig(filename) {
         logger.trace("BMS::readConfig");
         if (this.appConfig !== null) return;
@@ -1031,34 +886,93 @@ class BMS extends VEdeviceSerialAccu {
         // 2 lower and 2 upper, i.e. across 800 Ah.
         this.lowerFloatC   = new FloatChargeCharacteristic(fc, 6, 400); //this.accumulator.getNominalCapacity());
         this.upperFloatC   = new FloatChargeCharacteristic(fc, 6, 400); //this.accumulator.getNominalCapacity());
+	let rc = this.appConfig.restingCharge;
+        this.lowerRestingC = new RestingCharacteristic(rc);
+        this.upperRestingC = new RestingCharacteristic(rc);
+        // FIXME: temporary use RestingChara. until DischargeChar is defined
+        this.lowerDischargeC = new RestingCharacteristic(rc);
+        this.upperDischargeC = new RestingCharacteristic(rc);
 
         // Protection and alarms - must be created before registerListener
-        this.alarms = new Alarm(this.appConfig.Alarms.history, this.appConfig.Alarms.silenceInMin);
-        this.bottomBattProtectionLP = new FlowProtection('Bottom battery' , this.appConfig.BatteryProtectionLowPriority, this.alarms, this);
-        this.bottomBattProtectionHP = new FlowProtection('Bottom battery' , this.appConfig.BatteryProtectionHighPriority, this.alarms, this);
-        this.topBattProtectionLP    = new FlowProtection('Top battery' , this.appConfig.BatteryProtectionLowPriority, this.alarms, this);
-        this.topBattProtectionHP    = new FlowProtection('Top battery' , this.appConfig.BatteryProtectionHighPriority, this.alarms, this);
+        this.alarms = new Alarm(logger, this.appConfig.Alarms.history, this.appConfig.Alarms.silenceInMin);
+        this.bottomBattProtectionLP = new FlowProtection(0, 'Bottom battery' , this.appConfig.BatteryProtectionLowPriority, this.alarms, this);
+        this.bottomBattProtectionHP = new FlowProtection(1, 'Bottom battery' , this.appConfig.BatteryProtectionHighPriority, this.alarms, this);
+        this.topBattProtectionLP    = new FlowProtection(2, 'Top battery' , this.appConfig.BatteryProtectionLowPriority, this.alarms, this);
+        this.topBattProtectionHP    = new FlowProtection(3, 'Top battery' , this.appConfig.BatteryProtectionHighPriority, this.alarms, this);
+	this.chargerProtectionLP = new FlowProtection(4, 'Charger' , this.appConfig.ChargerProtectionLowPriority, this.alarm, this);
+        this.chargerProtectionHP = new FlowProtection(5, 'Charger' , this.appConfig.ChargerProtectionHighPriority, this.alarm, this);
+        this.chargerLoadProtectionLP = new FlowProtection(6, 'Charger load' , this.appConfig.ChargerLoadProtectionLowPriority, this.alarm, this);
+        this.chargerLoadProtectionHP = new FlowProtection(7, 'Charger load' , this.appConfig.ChargerLoadProtectionHighPriority, this.alarm, this);
+        this.chargerOverheatProtectionHP = new ChargerOverheatProtection(8, 'Charger Overheat' , this.appConfig.ChargerOverheatProtectionHighPriority, this.alarm, this);
     }
 
     protectFlow() {
         logger.trace("BMS::protectFlow");
-        if (!this.bottomBattProtectionLP || !this.bottomBattProtectionHP
-            || ! this.topBattProtectionLP || !this.topBattProtectionHP) return;
+        if (this.bottomBattProtectionLP) {
+	    this.bottomBattProtectionLP.setFlow(this.bottomFlow);
+	}
+        if (this.bottomBattProtectionHP) {
+	    this.bottomBattProtectionHP.setFlow(this.bottomFlow);
+	}
+        if (this.topBattProtectionLP) {
+	    this.topBattProtectionLP.setFlow(this.topFlow);
+	}
+	if (this.chargerProtectionHP) {
+            this.chargerProtectionHP.setFlow(this.chargerFlow);
+	}
+	if (this.chargerLoadProtectionLP) {
+            this.chargerLoadProtectionLP.setFlow(this.loadFlow);
+	}
+        if (this.chargerLoadProtectionHP) {
+	    this.chargerLoadProtectionHP.setFlow(this.loadFlow);
+	}
+	if (this.chargerOverheatProtectionHP) {
+            this.chargerOverheatProtectionHP.setFlow(this.pvFlow);
+	}
+    }
 
-	if (this.bottomFlow.getVoltage() !== 0) {
-            this.bottomBattProtectionLP.setFlow(this.bottomFlow);
-            this.bottomBattProtectionHP.setFlow(this.bottomFlow);
+    setFlows(changedMap, timeStamp) {
+
+	if (changedMap.has('midVoltage')) {
+	    this.bottomFlow.setVoltage(changedMap['midVoltage'].newValue);
 	}
-	if (this.topFlow.getVoltage() !== 0) {
-            this.topBattProtectionLP.setFlow(this.topFlow);
-            this.topBattProtectionHP.setFlow(this.topFlow);
+	if (changedMap.has('topVoltage')) {
+	    this.topFlow.setVoltage(changedMap['topVoltage'].newValue);
 	}
+	if (changedMap.has('upperVoltage') && changedMap.has('MPPTbatteryVoltage')) {
+	    // TODO: average, equalize of somehow make them equal as they should be
+	    //       despite device variances
+	}
+	if (changedMap.has('MPPTbatteryVoltage')) {
+	    let v = changedMap['MPPTbatteryVoltage'].newValue;
+            this.chargerFlow.setVoltage(v);
+            this.loadFlow.setVoltage(v);
+	}
+	if (changedMap.has('MPPTpvVoltage')) {
+            this.pvFlow.setVoltage(changedMap['MPPTpvVoltage'].newValue);
+	}
+	if (changedMap.has('batteryCurrent')) {
+            // see explanation to class FloatChargeCharacteristic:
+            // The current is measured across the 24V, i.e. it must be split
+            // across the lower and upper accus packs of 12V, i.e. divided by 2:
+            let current = changedMap['batteryCurrent'].newValue * 0.5;
+            this.bottomFlow.setCurrent(current);
+            this.topFlow.setCurrent(current);
+	}
+	if (changedMap.has('MPPTchargingCurrent')) {
+            let current = changedMap['MPPTchargingCurrent'].newValue;
+            this.chargerFlow.setCurrent(current);
+            this.pvFlow.setCurrent(current);
+	}
+	if (changedMap.has('MPPTloadCurrent')) {
+	    this.loadFlow.setCurrent(changedMap['MPPTloadCurrent'].newValue);
+	}
+        this.protectFlow();
     }
 
     setMidVoltage(newVoltage, oldVoltage, timeStamp, key) {
         logger.trace("BMS::setMidVoltage");
-        let voltage = newVoltage * this.ntuFactorLVoltage; // => in volts
-        this.bottomFlow.setVoltage(voltage);
+        this.bottomFlow.setVoltage(newVoltage);
 
         // Overcharge cannot be controlled (no electronic switches).
         // It should be handled by the charger and battery balancer
@@ -1070,8 +984,32 @@ class BMS extends VEdeviceSerialAccu {
 
     setTopVoltage(newVoltage, oldVoltage, timeStamp, key) {
         logger.trace("BMS::setTopVoltage");
-        let voltage = newVoltage * this.ntuFactorUVoltage; // => in volts
-        this.topFlow.setVoltage(voltage);
+        this.topFlow.setVoltage(newVoltage);
+
+        // Overcharge cannot be controlled (no electronic switches).
+        // It should be handled by the charger and battery balancer
+        // the later of which balances the voltage (exactly) between
+        // the two blocks in series.
+
+        this.protectFlow();
+    }
+
+    setPVVoltage(newVoltage, oldVoltage, timeStamp, key) {
+        logger.trace("BMS::setPVVoltage");
+        this.pvFlow.setVoltage(newVoltage);
+
+        // Overcharge cannot be controlled (no electronic switches).
+        // It should be handled by the charger and battery balancer
+        // the later of which balances the voltage (exactly) between
+        // the two blocks in series.
+
+        this.protectFlow();
+    }
+
+    setAccuChainVoltage(newVoltage, oldVoltage, timeStamp, key) {
+        logger.trace("BMS::setAccuChainVoltage");
+        this.chargerFlow.setVoltage(newVoltage);
+        this.loadFlow.setVoltage(newVoltage);
 
         // Overcharge cannot be controlled (no electronic switches).
         // It should be handled by the charger and battery balancer
@@ -1084,12 +1022,11 @@ class BMS extends VEdeviceSerialAccu {
     // \param newCurrent, oldCurrent, timeStamp as string (need conversion to numbers)
     setCurrent(newCurrent, oldCurrent, timeStamp, key) {
         logger.trace("BMS::setCurrent");
-        // TODO: overcurrent handling: if extracted current > 150 switch to mains (maybe 10% earlier to not destroy the fuse)
 
         // see explanation to class FloatChargeCharacteristic:
         // The current is measured across the 24V, i.e. it must be split
         // across the lower and upper accus packs of 12V, i.e. divided by 2:
-        let current = newCurrent * 0.5 * this.ntuFactorCurrent; // => SI units
+        let current = newCurrent * 0.5; // => SI units
         this.bottomFlow.setCurrent(current);
         this.topFlow.setCurrent(current);
 
@@ -1100,6 +1037,7 @@ class BMS extends VEdeviceSerialAccu {
         //this.upperIncCapacity.add(this.topFlow.getCurrent(), time);
 
         let lCurrent = this.bottomFlow.getCurrent();
+	// FIXME: soc and lCurrent are local variables an not exposed anywhere ==> useless. what was the purpose???
         let soc = 0;
         if (Math.abs(lCurrent) < 0.01) { // absolute less than 10mA
             soc = this.lowerRestingC.getSOC(this.bottomFlow);
@@ -1113,6 +1051,25 @@ class BMS extends VEdeviceSerialAccu {
         else if (lCurrent < 0 && this.lowerDischargeC) {
             soc = this.lowerDischargeC.getSOC(this.bottomFlow);
         }
+    }
+
+    // \param newCurrent, oldCurrent, timeStamp as string (need conversion to numbers)
+    setChargingCurrent(newCurrent, oldCurrent, timeStamp, key) {
+        logger.trace("BMS::setChargingCurrent");
+
+        this.chargerFlow.setCurrent(newCurrent);
+        this.pvFlow.setCurrent(newCurrent);
+
+        this.protectFlow();
+    }
+
+    // \param newCurrent, oldCurrent, timeStamp as string (need conversion to numbers)
+    setLoadCurrent(newCurrent, oldCurrent, timeStamp, key) {
+        logger.trace("BMS::setLoadCurrent");
+
+        this.loadFlow.setCurrent(newCurrent);
+
+        this.protectFlow();
     }
 
     getLowerSOC() {
@@ -1137,12 +1094,12 @@ class BMS extends VEdeviceSerialAccu {
         bmvdata.MPPTbatteryVoltage     = this.createObject(1,  "V", "MPPT Batt. Voltage");
         bmvdata.MPPTpvVoltage          = this.createObject(1,  "V", "MPPT PV Voltage");
         bmvdata.MPPTloadCurrent        = this.createObject(1,  "A", "MPPT Load Current");
-        bmvdata.MPPTisOverload         = this.createObject(1,  "", "MPPT Overloaded");
-        bmvdata.MPPTisShortcutLoad     = this.createObject(1,  "", "MPPT Load Shortcut");
-        bmvdata.MPPTisBatteryOverload  = this.createObject(1,  "", "MPPT Batt. Overloaded");
-        bmvdata.MPPTisOverDischarge    = this.createObject(1,  "", "MPPT Over Discharged");
-        bmvdata.MPPTisFullIndicator    = this.createObject(1,  "", "MPPT Batt. Full");
-        bmvdata.MPPTisCharging         = this.createObject(1,  "", "MPPT Charging");
+        bmvdata.MPPTisOverload         = this.createObject(0,  "", "MPPT Overloaded");
+        bmvdata.MPPTisShortcutLoad     = this.createObject(0,  "", "MPPT Load Shortcut");
+        bmvdata.MPPTisBatteryOverload  = this.createObject(0,  "", "MPPT Batt. Overloaded");
+        bmvdata.MPPTisOverDischarge    = this.createObject(0,  "", "MPPT Over Discharged");
+        bmvdata.MPPTisFullIndicator    = this.createObject(0,  "", "MPPT Batt. Full");
+        bmvdata.MPPTisCharging         = this.createObject(0,  "", "MPPT Charging");
         bmvdata.MPPTbatteryTemperature = this.createObject(1,  "C", "MPPT Batt. Temp.");
         bmvdata.MPPTchargingCurrent    = this.createObject(1,  "A", "MPPT Charge Current");
     }

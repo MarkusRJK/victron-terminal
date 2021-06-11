@@ -69,8 +69,9 @@
         "whenCurrentAbove" : 16.5
     },
     "ChargerOverheatProtectionHighPriority" : {
+	"note"             : "occassionally the charger decides to discharge the battery (I < 0), while V > maxVoltage",
         "alarmLevel"       : 2,
-        "maxVoltage"       : 33,
+        "maxVoltage"       : 32,
         "whenCurrentBelow" : 0.1
     },
 
