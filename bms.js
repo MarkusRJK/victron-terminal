@@ -242,9 +242,6 @@ class Charge extends IntegralOverTime {
     // FIXME: rethink: do we need to hand over value/timestamp here, if so get it right
     constructor(value, timeStamp) {
         super(value, timeStamp);
-
-        // FIXME: the following isn't defined
-        this.ntuFactorCurrent  = bmvdata.batteryCurrent.nativeToUnitFactor;
     }
 
     addCurrent(current, timeStamp) {
@@ -253,8 +250,7 @@ class Charge extends IntegralOverTime {
             currentTime = timeStamp;
         else
             currentTime = new Date(); // time in milliseconds since epoch
-	// FIXME: ntufactor now posibly wrong!!!
-        this.add(current * this.ntuFactorCurrent, currentTime * 0.001);
+        this.add(current, currentTime * 0.001);
     }
 }
 
@@ -333,12 +329,12 @@ class FloatChargeCharacteristic {
     constructor(fc, cells, capacity) {
         logger.trace("FloatChargeCharacteristic::constructor");
         this.isOperational = false;
-        this.resistance = [];
-        this.soc = []; // state of charge
+        this.resistance = new Array();
+        this.soc = new Array(); // state of charge
         // each accumulated ampere hour while charging must be multiplied by the appropriate
         // factor this.reduceAh[i]:
-        this.reduceAh = []; // reduction factors for incoming ampere hours to real charge
-        this.simplefAh = []; // reduction factors for incoming ampere hours to real charge
+        this.reduceAh = new Array(); // reduction factors for incoming ampere hours to real charge
+        this.simplefAh = new Array(); // reduction factors for incoming ampere hours to real charge
 
         // concat the time data, sort and make entries unique
         let tmp      = fc.current.hours.concat(fc.voltage.hours).unique();
@@ -363,7 +359,7 @@ class FloatChargeCharacteristic {
             console.log(idx + ", " + i + ", " + this.U[idx] + ", " + this.CP[idx]);
         }.bind(this));
         console.log("i, R(i), SOC(i), fAh(i)");
-	// FIXME: entry 19, 20, 21 of SOC(i) and fAh(i) contains undefined:
+        // FIXME: entry 19, 20, 21 of SOC(i) and fAh(i) contains undefined:
         this.R.map(function(r, idx) {
             console.log(idx + ", " + r + ", " + this.soc[idx] + ", " + this.reduceAh[idx]);
         }.bind(this));
@@ -689,10 +685,11 @@ class VEdeviceSerialAccu extends VEdeviceClass {
         // Demonstration how to create additional objects
         // and how to make them fire on update events:
         // map an additional component topVoltage
-	// FIXME: which works reliably this.cache or bmvdata (which is not exported)
+        // FIXME: which works reliably this.cache or bmvdata (which is not exported)
         this.cache = this.update();
-	let bmvdata = this.update();
-        this.cache['topVoltage'] = this.createObject(0.001,  "V", "Top Voltage");
+        let bmvdata = this.update();
+        this.cache['topVoltage'] = this.createObject(0.001,  "V", "Top Voltage",
+                                                     { 'precision': -1 });
         // Make midVoltage and upperVoltage fire topVoltage's callback "on"
         // if there is a change in these dependencies
         // bmvdata.upperVoltage.on.push(
@@ -717,31 +714,35 @@ class VEdeviceSerialAccu extends VEdeviceClass {
         //         this.rxtx.runOnFunction('topVoltage', bmvdata.topVoltage);
         //     }).bind(this)
         // );
-	// FIXME: topVoltage now displays negative (same absolute) after removing ntuFactors
+        this.registerComponent('V'); // create upperVoltage in Cache
         this.cache.upperVoltage.on.push(
             ((newValue, oldValue, packageArrivalTime, key) => {
                 if (this.cache.topVoltage.newValue !== null) return; // topValue already set
                 let midVoltage = this.cache.midVoltage.newValue;
-                // if runOnFunction was called for midVoltage then newValue is null
-                if (midVoltage === null) midVoltage = this.cache.midVoltage.value;
-		newValue = newValue / this.cache.upperVoltage.nativeToUnitFactor;
-		console.log('midVoltage: ' + midVoltage + '    upperVoltage: ' + newValue);
+                // it always arrives a set of parameters together, so either
+                // upperVoltage's and midVoltage's newValue is != null for both or
+                // for none
+                if (midVoltage === null) return;
+                newValue = newValue / this.cache.upperVoltage.nativeToUnitFactor;
                 this.cache.topVoltage.newValue = newValue - midVoltage;
                 // TODO: add returned object to changeObjects
-		// FIXME: set dirty flag and run updateValuesAnd...() if dirty
-                this.rxtx.runOnFunction('topVoltage', this.cache.topVoltage);
+                // FIXME: set dirty flag and run updateValuesAnd...() if dirty
+                //this.rxtx.runOnFunction('topVoltage', this.cache.topVoltage);
             }).bind(this)
         );
+        this.registerComponent('VM'); // create upperVoltage in Cache
         this.cache.midVoltage.on.push(
             ((newValue, oldValue, packageArrivalTime, key) => {
                 if (this.cache.topVoltage.newValue !== null) return; // topValue already set
                 let upperVoltage = this.cache.upperVoltage.newValue;
-                // if runOnFunction was called for upperVoltage then newValue is null
-                if (upperVoltage === null) upperVoltage = this.cache.upperVoltage.value;
-		newValue = newValue / this.cache.midVoltage.nativeToUnitFactor;
+                // it always arrives a set of parameters together, so either
+                // upperVoltage's and midVoltage's newValue is != null for both or
+                // for none
+                if (upperVoltage === null) return;
+                newValue = newValue / this.cache.midVoltage.nativeToUnitFactor;
                 this.cache.topVoltage.newValue = upperVoltage - newValue;
                 // TODO: add returned object to changeObjects
-                this.rxtx.runOnFunction('topVoltage', this.cache.topVoltage);
+                //this.rxtx.runOnFunction('topVoltage', this.cache.topVoltage);
             }).bind(this)
         );
         // this.cache.topSOC          = createObject(1,  "%", "Top SOC", {'formatter' : function()
@@ -808,7 +809,7 @@ class BMS extends VEdeviceSerialAccu {
         this.bottomBattProtectionHP = null;
         this.topBattProtectionLP    = null;
         this.topBattProtectionHP    = null;
-	this.chargerProtectionLP    = null;
+        this.chargerProtectionLP    = null;
         this.chargerProtectionHP    = null;
         this.chargerLoadProtectionLP = null;
         this.chargerLoadProtectionHP = null;
@@ -826,7 +827,7 @@ class BMS extends VEdeviceSerialAccu {
         this.bottomFlow  = new Flow();
         this.chargerFlow = new Flow();
         this.loadFlow    = new Flow();
-	this.pvFlow      = new Flow();
+        this.pvFlow      = new Flow();
 
         // accu characteristics
         // TODO: read 200Ah from file
@@ -835,12 +836,9 @@ class BMS extends VEdeviceSerialAccu {
         this.bottomAccumulator = new Accumulator(2 * 200); // 2 accus in parallel like one 400Ah accu
         this.topAccumulator = new Accumulator(2 * 200); // 2 accus in parallel like one 400Ah accu
 
-        // this.registerListener('midVoltage', this.setMidVoltage.bind(this));
-        // this.registerListener('topVoltage', this.setTopVoltage.bind(this));
-	// // FIXME: the following voltage should be the same as bmvdata.upperVoltage
-	// //        possible solution: average these voltages
-	// this.registerListener('MPPTbatteryVoltage', this.setAccuChainVoltage.bind(this));
-        // this.registerListener('MPPTpvVoltage', this.setPVVoltage.bind(this));
+        // // FIXME: the following voltage should be the same as bmvdata.upperVoltage
+        // //        possible solution: average these voltages
+        // this.registerListener('MPPTbatteryVoltage', this.setAccuChainVoltage.bind(this));
 
         this.topFloatVolume = new FloatVolume(this.topAccumulator, this.upperFloatC, this.upperDischargeC, this.upperRestingC);
         this.bottomFloatVolume = new FloatVolume(this.bottomAccumulator, this.lowerFloatC, this.lowerDischargeC, this.lowerRestingC);
@@ -848,15 +846,9 @@ class BMS extends VEdeviceSerialAccu {
         //this.lowerIncCapacity = new IntegralOverTime(this.bottomFlow.getCurrent());
         //this.upperIncCapacity = new IntegralOverTime(this.topFlow.getCurrent());
 
-        // must be registered last because lower|upperFlow and
-        // lower|upperIncCapacity must be instantiated before
-        // this.registerListener('batteryCurrent', this.setCurrent.bind(this));
-        // this.registerListener('MPPTchargingCurrent', this.setChargingCurrent.bind(this));
-        // this.registerListener('MPPTloadCurrent', this.setLoadCurrent.bind(this));
+        this.registerListener('ChangeList', this.setFlows.bind(this));
 
-	this.registerListener('ChangeList', this.setFlows.bind(this));
-
-	this.hideBMVdisplayParams();
+        this.hideBMVdisplayParams();
         this.createMPPTobjects();
     }
 
@@ -886,7 +878,7 @@ class BMS extends VEdeviceSerialAccu {
         // 2 lower and 2 upper, i.e. across 800 Ah.
         this.lowerFloatC   = new FloatChargeCharacteristic(fc, 6, 400); //this.accumulator.getNominalCapacity());
         this.upperFloatC   = new FloatChargeCharacteristic(fc, 6, 400); //this.accumulator.getNominalCapacity());
-	let rc = this.appConfig.restingCharge;
+        let rc = this.appConfig.restingCharge;
         this.lowerRestingC = new RestingCharacteristic(rc);
         this.upperRestingC = new RestingCharacteristic(rc);
         // FIXME: temporary use RestingChara. until DischargeChar is defined
@@ -899,7 +891,7 @@ class BMS extends VEdeviceSerialAccu {
         this.bottomBattProtectionHP = new FlowProtection(1, 'Bottom battery' , this.appConfig.BatteryProtectionHighPriority, this.alarms, this);
         this.topBattProtectionLP    = new FlowProtection(2, 'Top battery' , this.appConfig.BatteryProtectionLowPriority, this.alarms, this);
         this.topBattProtectionHP    = new FlowProtection(3, 'Top battery' , this.appConfig.BatteryProtectionHighPriority, this.alarms, this);
-	this.chargerProtectionLP = new FlowProtection(4, 'Charger' , this.appConfig.ChargerProtectionLowPriority, this.alarm, this);
+        this.chargerProtectionLP = new FlowProtection(4, 'Charger' , this.appConfig.ChargerProtectionLowPriority, this.alarm, this);
         this.chargerProtectionHP = new FlowProtection(5, 'Charger' , this.appConfig.ChargerProtectionHighPriority, this.alarm, this);
         this.chargerLoadProtectionLP = new FlowProtection(6, 'Charger load' , this.appConfig.ChargerLoadProtectionLowPriority, this.alarm, this);
         this.chargerLoadProtectionHP = new FlowProtection(7, 'Charger load' , this.appConfig.ChargerLoadProtectionHighPriority, this.alarm, this);
@@ -909,102 +901,67 @@ class BMS extends VEdeviceSerialAccu {
     protectFlow() {
         logger.trace("BMS::protectFlow");
         if (this.bottomBattProtectionLP) {
-	    this.bottomBattProtectionLP.setFlow(this.bottomFlow);
-	}
+            this.bottomBattProtectionLP.setFlow(this.bottomFlow);
+        }
         if (this.bottomBattProtectionHP) {
-	    this.bottomBattProtectionHP.setFlow(this.bottomFlow);
-	}
+            this.bottomBattProtectionHP.setFlow(this.bottomFlow);
+        }
         if (this.topBattProtectionLP) {
-	    this.topBattProtectionLP.setFlow(this.topFlow);
-	}
-	if (this.chargerProtectionHP) {
+            this.topBattProtectionLP.setFlow(this.topFlow);
+        }
+        if (this.chargerProtectionHP) {
             this.chargerProtectionHP.setFlow(this.chargerFlow);
-	}
-	if (this.chargerLoadProtectionLP) {
+        }
+        if (this.chargerLoadProtectionLP) {
             this.chargerLoadProtectionLP.setFlow(this.loadFlow);
-	}
+        }
         if (this.chargerLoadProtectionHP) {
-	    this.chargerLoadProtectionHP.setFlow(this.loadFlow);
-	}
-	if (this.chargerOverheatProtectionHP) {
+            this.chargerLoadProtectionHP.setFlow(this.loadFlow);
+        }
+        if (this.chargerOverheatProtectionHP) {
             this.chargerOverheatProtectionHP.setFlow(this.pvFlow);
-	}
+        }
     }
 
     setFlows(changedMap, timeStamp) {
 
-	if (changedMap.has('midVoltage')) {
-	    this.bottomFlow.setVoltage(changedMap['midVoltage'].newValue);
-	}
-	if (changedMap.has('topVoltage')) {
-	    this.topFlow.setVoltage(changedMap['topVoltage'].newValue);
-	}
-	if (changedMap.has('upperVoltage') && changedMap.has('MPPTbatteryVoltage')) {
-	    // TODO: average, equalize of somehow make them equal as they should be
-	    //       despite device variances
-	}
-	if (changedMap.has('MPPTbatteryVoltage')) {
-	    let v = changedMap['MPPTbatteryVoltage'].newValue;
+        if (changedMap.has('midVoltage')) {
+            this.bottomFlow.setVoltage(changedMap.get('midVoltage').newValue);
+        }
+        if (changedMap.has('topVoltage')) {
+            this.topFlow.setVoltage(changedMap.get('topVoltage').newValue);
+        }
+        if (changedMap.has('upperVoltage') && changedMap.has('MPPTbatteryVoltage')) {
+            // TODO: average, equalize of somehow make them equal as they should be
+            //       despite device variances
+        }
+        if (changedMap.has('MPPTbatteryVoltage')) {
+            let v = changedMap.get('MPPTbatteryVoltage').newValue;
             this.chargerFlow.setVoltage(v);
             this.loadFlow.setVoltage(v);
-	}
-	if (changedMap.has('MPPTpvVoltage')) {
-            this.pvFlow.setVoltage(changedMap['MPPTpvVoltage'].newValue);
-	}
-	if (changedMap.has('batteryCurrent')) {
+        }
+        if (changedMap.has('MPPTpvVoltage')) {
+            this.pvFlow.setVoltage(changedMap.get('MPPTpvVoltage').newValue);
+        }
+        if (changedMap.has('batteryCurrent')) {
             // see explanation to class FloatChargeCharacteristic:
             // The current is measured across the 24V, i.e. it must be split
             // across the lower and upper accus packs of 12V, i.e. divided by 2:
-            let current = changedMap['batteryCurrent'].newValue * 0.5;
+            let current = changedMap.get('batteryCurrent').newValue * 0.5;
             this.bottomFlow.setCurrent(current);
             this.topFlow.setCurrent(current);
-	}
-	if (changedMap.has('MPPTchargingCurrent')) {
-            let current = changedMap['MPPTchargingCurrent'].newValue;
+        }
+        if (changedMap.has('MPPTchargingCurrent')) {
+            let current = changedMap.get('MPPTchargingCurrent').newValue;
             this.chargerFlow.setCurrent(current);
             this.pvFlow.setCurrent(current);
-	}
-	if (changedMap.has('MPPTloadCurrent')) {
-	    this.loadFlow.setCurrent(changedMap['MPPTloadCurrent'].newValue);
-	}
+        }
+        if (changedMap.has('MPPTloadCurrent')) {
+            this.loadFlow.setCurrent(changedMap.get('MPPTloadCurrent').newValue);
+        }
         this.protectFlow();
     }
 
-    setMidVoltage(newVoltage, oldVoltage, timeStamp, key) {
-        logger.trace("BMS::setMidVoltage");
-        this.bottomFlow.setVoltage(newVoltage);
-
-        // Overcharge cannot be controlled (no electronic switches).
-        // It should be handled by the charger and battery balancer
-        // the later of which balances the voltage (exactly) between
-        // the two blocks in series.
-
-        this.protectFlow();
-    }
-
-    setTopVoltage(newVoltage, oldVoltage, timeStamp, key) {
-        logger.trace("BMS::setTopVoltage");
-        this.topFlow.setVoltage(newVoltage);
-
-        // Overcharge cannot be controlled (no electronic switches).
-        // It should be handled by the charger and battery balancer
-        // the later of which balances the voltage (exactly) between
-        // the two blocks in series.
-
-        this.protectFlow();
-    }
-
-    setPVVoltage(newVoltage, oldVoltage, timeStamp, key) {
-        logger.trace("BMS::setPVVoltage");
-        this.pvFlow.setVoltage(newVoltage);
-
-        // Overcharge cannot be controlled (no electronic switches).
-        // It should be handled by the charger and battery balancer
-        // the later of which balances the voltage (exactly) between
-        // the two blocks in series.
-
-        this.protectFlow();
-    }
 
     setAccuChainVoltage(newVoltage, oldVoltage, timeStamp, key) {
         logger.trace("BMS::setAccuChainVoltage");
@@ -1037,7 +994,7 @@ class BMS extends VEdeviceSerialAccu {
         //this.upperIncCapacity.add(this.topFlow.getCurrent(), time);
 
         let lCurrent = this.bottomFlow.getCurrent();
-	// FIXME: soc and lCurrent are local variables an not exposed anywhere ==> useless. what was the purpose???
+        // FIXME: soc and lCurrent are local variables an not exposed anywhere ==> useless. what was the purpose???
         let soc = 0;
         if (Math.abs(lCurrent) < 0.01) { // absolute less than 10mA
             soc = this.lowerRestingC.getSOC(this.bottomFlow);
@@ -1051,25 +1008,6 @@ class BMS extends VEdeviceSerialAccu {
         else if (lCurrent < 0 && this.lowerDischargeC) {
             soc = this.lowerDischargeC.getSOC(this.bottomFlow);
         }
-    }
-
-    // \param newCurrent, oldCurrent, timeStamp as string (need conversion to numbers)
-    setChargingCurrent(newCurrent, oldCurrent, timeStamp, key) {
-        logger.trace("BMS::setChargingCurrent");
-
-        this.chargerFlow.setCurrent(newCurrent);
-        this.pvFlow.setCurrent(newCurrent);
-
-        this.protectFlow();
-    }
-
-    // \param newCurrent, oldCurrent, timeStamp as string (need conversion to numbers)
-    setLoadCurrent(newCurrent, oldCurrent, timeStamp, key) {
-        logger.trace("BMS::setLoadCurrent");
-
-        this.loadFlow.setCurrent(newCurrent);
-
-        this.protectFlow();
     }
 
     getLowerSOC() {

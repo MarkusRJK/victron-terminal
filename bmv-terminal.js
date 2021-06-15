@@ -695,7 +695,7 @@ term.on( 'key' , ( name , matches , data ) => {
     }
     else if ( name === 'L' )
     {
-        if (vedirect.hasListener('batteryCurrent'))
+        if (vedirect.hasListeners('batteryCurrent'))
         {
             term.yellow('Stop Logging current');
             vedirect.registerListener('batteryCurrent', null);
