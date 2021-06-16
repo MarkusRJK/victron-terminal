@@ -60,21 +60,39 @@ function terminate()
 
 term.clear();
 
+function getShortDescr(key) {
+    if (typeof bmvdata[key] !== 'undefined') return bmvdata[key].shortDescr + ':';
+    return "";
+}
+
+function getFormatted(key) {
+    if (typeof bmvdata[key] !== 'undefined') return bmvdata[key].formatted();
+    return "";
+}
+
+function getFormattedWithUnit(key) {
+    if (typeof bmvdata[key] !== 'undefined') return bmvdata[key].formattedWithUnit();
+    return "";
+}
+
+function getValue(key) {
+    if (typeof bmvdata[key] !== 'undefined') return bmvdata[key].value;
+    return null;
+}
+
 function getStoredAh()
 {
-    if (bmvdata.absorbedEnergy.value === null) return null;
-    if (bmvdata.dischargeEnergy.value === null) return null;
+    if (getValue('absorbedEnergy') === null) return null;
+    if (getValue('dischargeEnergy') === null) return null;
     // do not use formatted(); value yields in better precision
-    let consumedAh = bmvdata.absorbedEnergy.value - bmvdata.dischargeEnergy.value;
+    let consumedAh = getValue('absorbedEnergy') - getValue('dischargeEnergy');
     consumedAh /= 2400; // multiply value by 0.01 to get kWh and divide by 24V to get Ah
     return consumedAh;
 }
 
 function getAccumulatedSOC(soc, deltaAhSinceLast)
 {
-    if (bmvdata.capacity.value === undefined
-        || bmvdata.capacity.value === null
-        || bmvdata.capacity.value === 0)
+    if (!getValue('capacity'))
     {
         logger.warn("getAccumulatedSOC: Capacity missing");
         return null;
@@ -85,9 +103,9 @@ function getAccumulatedSOC(soc, deltaAhSinceLast)
         return null;
     }
     soc = soc * 0.01; // convert from % to float
-    let lastAh = soc * bmvdata.capacity.formatted();
+    let lastAh = soc * getFormatted('capacity');
     let currentAh = lastAh + deltaAhSinceLast;
-    let socNew = Math.max(Math.min(currentAh / bmvdata.capacity.formatted() * 100.0, 100.0), 0.0);
+    let socNew = Math.max(Math.min(currentAh / getFormatted('capacity') * 100.0, 100.0), 0.0);
     if (deltaAhSinceLast != 0)
         logger.debug("deltaAhsincelast: " + deltaAhSinceLast
                      + "  soc: " + soc
@@ -128,7 +146,7 @@ function getBestEstimateTopSOC(current)
     let topSOC = getAccumulatedSOC(lastTopSOC, deltaAhSinceLast);
     logger.debug("topSOC = " + topSOC);
     let voltage = 1.955 * 6;
-//    if (bmvdata.topVoltage.value !== null) voltage = bmvdata.topVoltage.formatted();
+//    if (getValue('topVoltage') !== null) voltage = getFormatted('topVoltage');
     if (topSOC === null)
         topSOC = estimate_SOC(voltage);
     //logger.info("current: " + current + "  maxNullcurrentth: " + maxNullCurrentThreshold);
@@ -170,7 +188,7 @@ function getBestEstimateBottomSOC(current)
     }
     let bottomSOC = getAccumulatedSOC(lastBottomSOC, deltaAhSinceLast)
     let voltage = 1.955 * 6;
-    if (bmvdata.midVoltage.value !== null) voltage = bmvdata.midVoltage.formatted();
+    if (getValue('midVoltage') !== null) voltage = getFormatted('midVoltage');
     if (bottomSOC === null)
         bottomSOC = estimate_SOC(voltage);
     //logger.info("current: " + current + "  maxNullcurrentth: " + maxNullCurrentThreshold);
@@ -213,62 +231,62 @@ function displayCurrentAndHistory() {
     term.clear();
 
     term.moveTo(v1, h, "BMV type: ");
-    term.brightBlue(bmvdata.productId.formatted());
-    term.moveTo(v2, h, "%s: %f", bmvdata.version.shortDescr, bmvdata.version.formatted() );
+    term.brightBlue(getFormatted('productId'));
+    term.moveTo(v2, h, "%s %f", getShortDescr('version'), getFormatted('version') );
     let d = new Date();
     term.moveTo(v3, h++, "Time: %s", d.toUTCString() );
 
     h++;
     term.moveTo(v1 , h,   clearStr) ;
-    term.moveTo(v1,  h,   "%s: ", bmvdata.alarmState.shortDescr);
-    if (bmvdata.alarmState.value === "OFF") {
-        term.green(bmvdata.alarmState.value);
+    term.moveTo(v1,  h,   "%s ", getShortDescr('alarmState'));
+    if (getValue('alarmState') === "OFF") {
+        term.green(getValue('alarmState'));
     }
     else {
-        term.brightRed(bmvdata.alarmState.value);
+        term.brightRed(getValue('alarmState'));
     }
-    term.moveTo(v2,  h,   "%s: %s", bmvdata.relayState.shortDescr, bmvdata.relayState.value);
-    term.moveTo(v3 , h++, "Accu Alarm: (%d) ", bmvdata.alarmReason.value) ;
-    var alarmText = bmvdata.alarmReason.formatted();
-    if (bmvdata.alarmReason.value == 0) {
+    term.moveTo(v2,  h,   "%s %s", getShortDescr('relayState'), getValue('relayState'));
+    term.moveTo(v3 , h++, "Accu Alarm: (%d) ", getValue('alarmReason')) ;
+    var alarmText = getFormatted('alarmReason');
+    if (getValue('alarmReason') == 0) {
         term.green( alarmText ) ;
     } else {
         term.brightRed( alarmText ) ;
     } 
 
     term.moveTo(v1, h,   clearStr);
-    term.moveTo(v2, h,   "%s: %s", bmvdata.lowVoltageAlarms.shortDescr, bmvdata.lowVoltageAlarms.formattedWithUnit());
-    term.moveTo(v3, h++, "%s: %s", bmvdata.highVoltageAlarms.shortDescr, bmvdata.highVoltageAlarms.formattedWithUnit());
+    term.moveTo(v2, h,   "%s %s", getShortDescr('lowVoltageAlarms'), getFormattedWithUnit('lowVoltageAlarms'));
+    term.moveTo(v3, h++, "%s %s", getShortDescr('highVoltageAlarms'), getFormattedWithUnit('highVoltageAlarms'));
 
     term.white.moveTo(v1, h, clearStr);
-    term.moveTo(v1, h,   "%s: %s", bmvdata.minVoltage.shortDescr, bmvdata.minVoltage.formattedWithUnit());
-    term.moveTo(v2, h, bmvdata.upperVoltage.shortDescr + ": ") ;
-    if (bmvdata.batteryCurrent.value === 0) {
-        term.blue( bmvdata.upperVoltage.formattedWithUnit() ) ;
+    term.moveTo(v1, h,   "%s %s", getShortDescr('minVoltage'), getFormattedWithUnit('minVoltage'));
+    term.moveTo(v2, h, getShortDescr('upperVoltage') + " ") ;
+    if (getValue('batteryCurrent') === 0) {
+        term.blue( getFormattedWithUnit('upperVoltage') ) ;
     }
-    if (bmvdata.batteryCurrent.value < 0) {
-        term.yellow( bmvdata.upperVoltage.formattedWithUnit() ) ;
+    if (getValue('batteryCurrent') < 0) {
+        term.yellow( getFormattedWithUnit('upperVoltage') ) ;
     }
-    if (bmvdata.batteryCurrent.value > 0) {
-        term.green( bmvdata.upperVoltage.formattedWithUnit() ) ;
+    if (getValue('batteryCurrent') > 0) {
+        term.green( getFormattedWithUnit('upperVoltage') ) ;
     }
-    term.moveTo(v3, h++, "%s: %s", bmvdata.maxVoltage.shortDescr, bmvdata.maxVoltage.formattedWithUnit());
+    term.moveTo(v3, h++, "%s %s", getShortDescr('maxVoltage'), getFormattedWithUnit('maxVoltage'));
 
     term.moveTo(v1, h,   clearStr);
-    term.moveTo(v1, h,   "%s: %s", bmvdata.minAuxVoltage.shortDescr, bmvdata.minAuxVoltage.formattedWithUnit());
+    term.moveTo(v1, h,   "%s %s", getShortDescr('minAuxVoltage'), getFormattedWithUnit('minAuxVoltage'));
 
-    term.moveTo(v2, h,   "%s: %s   " , bmvdata.midVoltage.shortDescr, bmvdata.midVoltage.formattedWithUnit() ) ;
+    term.moveTo(v2, h,   "%s %s   " , getShortDescr('midVoltage'), getFormattedWithUnit('midVoltage') ) ;
 
-    term.moveTo(v3, h++, "%s: %s", bmvdata.maxAuxVoltage.shortDescr, bmvdata.maxAuxVoltage.formattedWithUnit());
+    term.moveTo(v3, h++, "%s %s", getShortDescr('maxAuxVoltage'), getFormattedWithUnit('maxAuxVoltage'));
 
     term.moveTo(v1, h,   clearStr);
-    term.moveTo(v2, h++, "%s: %s   " , bmvdata.topVoltage.shortDescr, bmvdata.topVoltage.formattedWithUnit()) ;
+    term.moveTo(v2, h++, "%s %s   " , getShortDescr('topVoltage'), getFormattedWithUnit('topVoltage')) ;
 
     term.moveTo(v1, h, clearStr);
 
     let current = maxNullCurrentThreshold + 1;
-    if (bmvdata.batteryCurrent.value !== null && bmvdata.batteryCurrent.value !== undefined)
-        current = bmvdata.batteryCurrent.formatted();
+    if (getValue('batteryCurrent') !== null && getValue('batteryCurrent') !== undefined)
+        current = getFormatted('batteryCurrent');
 
     //let topSOC    = getBestEstimateTopSOC(current).toFixed(1);
     //let bottomSOC = getBestEstimateBottomSOC(current).toFixed(1);
@@ -283,53 +301,53 @@ function displayCurrentAndHistory() {
         console.log(err);
         minSOC = 0;
     }
-    if ((isNaN(bmvdata.stateOfCharge.value)) || bmvdata.stateOfCharge.value * 0.1 > 100
-        || bmvdata.stateOfCharge.value * 0.1 < 0)
+    if ((isNaN(getValue('stateOfCharge'))) || getValue('stateOfCharge') * 0.1 > 100
+        || getValue('stateOfCharge') * 0.1 < 0)
         if (minSOC) vedirect.setStateOfCharge(minSOC);
 
-    if (minSOC && Math.abs(bmvdata.stateOfCharge.value * 0.1 - minSOC) >=1)
+    if (minSOC && Math.abs(getValue('stateOfCharge') * 0.1 - minSOC) >=1)
     {
         vedirect.setStateOfCharge(minSOC);
     }
     term.moveTo(v1, h,     "%s: %s %  " , "SOC lower", bottomSOC);
-    term.moveTo(v2, h,     "SOC: %s  " , bmvdata.stateOfCharge.formattedWithUnit() ) ;
+    term.moveTo(v2, h,     "SOC: %s  " , getFormattedWithUnit('stateOfCharge') ) ;
     term.moveTo(v3, h++,   "%s: %s %  " , "SOC top", topSOC);
 
     term.moveTo(v1, h, clearStr) ;
-    term.moveTo(v2, h++, "%s: %s", bmvdata.midDeviation.shortDescr, bmvdata.midDeviation.formattedWithUnit());
+    term.moveTo(v2, h++, "%s %s", getShortDescr('midDeviation'), getFormattedWithUnit('midDeviation'));
 
     term.moveTo(v1, h, clearStr) ;
-    term.moveTo(v1, h, "Current %s   " , bmvdata.batteryCurrent.formattedWithUnit() ) ;
-    term.moveTo(v2, h++, "Power: %s", bmvdata.instantPower.formattedWithUnit());
+    term.moveTo(v1, h, "Current %s   " , getFormattedWithUnit('batteryCurrent') ) ;
+    term.moveTo(v2, h++, "Power: %s", getFormattedWithUnit('instantPower'));
 
     //term.moveTo(v1, h, clearStr) ;
-    //term.moveTo(v1, h++, "%s: %s   " , bmvdata.auxVolt.shortDescr, bmvdata.auxVolt.formattedWithUnit() ) ;
+    //term.moveTo(v1, h++, "%s %s   " , getShortDescr('auxVolt'), getFormattedWithUnit('auxVolt') ) ;
 
     // bmvdata.VS, bmvdata.I2, bmvdata.V2, bmvdata.SOC2
     //term.moveTo( 24 ,16 , "                                "); 
     //term.moveTo( 24 ,16 , "Line: %s", bmvdata.line);
 
     term.moveTo(v1, h,   clearStr);
-    term.moveTo(v1, h, "Dischg deep: %s", bmvdata.deepestDischarge.formattedWithUnit());
-    term.moveTo(v2, h, "last: %s", bmvdata.maxAHsinceLastSync.formattedWithUnit());
-    term.moveTo(v3, h++, "avg.: %s", bmvdata.avgDischarge.formattedWithUnit());
+    term.moveTo(v1, h, "Dischg deep: %s", getFormattedWithUnit('deepestDischarge'));
+    term.moveTo(v2, h, "last: %s", getFormattedWithUnit('maxAHsinceLastSync'));
+    term.moveTo(v3, h++, "avg.: %s", getFormattedWithUnit('avgDischarge'));
 
     term.moveTo(v1, h,   clearStr);
-    term.moveTo(v1, h, "%s: %s", bmvdata.chargeCycles.shortDescr, bmvdata.chargeCycles.formattedWithUnit());
-    term.moveTo(v2, h, "%s: %s", bmvdata.fullDischarges.shortDescr, bmvdata.fullDischarges.formattedWithUnit());
-    term.moveTo(v3, h++, "%s: %s", bmvdata.noAutoSyncs.shortDescr, bmvdata.noAutoSyncs.formattedWithUnit());
+    term.moveTo(v1, h, "%s %s", getShortDescr('chargeCycles'), getFormattedWithUnit('chargeCycles'));
+    term.moveTo(v2, h, "%s %s", getShortDescr('fullDischarges'), getFormattedWithUnit('fullDischarges'));
+    term.moveTo(v3, h++, "%s %s", getShortDescr('noAutoSyncs'), getFormattedWithUnit('noAutoSyncs'));
 
     term.moveTo(v1, h,   clearStr);
-    term.moveTo(v1, h, "%s: %s", bmvdata.drawnAh.shortDescr, bmvdata.drawnAh.formattedWithUnit());
-    term.moveTo(v2, h, "%s: %s", bmvdata.dischargeEnergy.shortDescr, bmvdata.dischargeEnergy.formattedWithUnit());
-    term.moveTo(v3, h++, "%s: %s", bmvdata.absorbedEnergy.shortDescr, bmvdata.absorbedEnergy.formattedWithUnit());
+    term.moveTo(v1, h, "%s %s", getShortDescr('drawnAh'), getFormattedWithUnit('drawnAh'));
+    term.moveTo(v2, h, "%s %s", getShortDescr('dischargeEnergy'), getFormattedWithUnit('dischargeEnergy'));
+    term.moveTo(v3, h++, "%s %s", getShortDescr('absorbedEnergy'), getFormattedWithUnit('absorbedEnergy'));
 
     term.moveTo(v1, h,   clearStr);
-    term.moveTo(v1, h++, "%s: %s", bmvdata.consumedAh.shortDescr, bmvdata.consumedAh.formattedWithUnit());
+    term.moveTo(v1, h++, "%s %s", getShortDescr('consumedAh'), getFormattedWithUnit('consumedAh'));
 
     term.moveTo(v1, h,   clearStr);
-    term.moveTo(v1, h,   "%s: %s", bmvdata.timeSinceFullCharge.shortDescr, bmvdata.timeSinceFullCharge.formattedWithUnit());
-    term.moveTo(v3, h++, "%s: %s", bmvdata.timeToGo.shortDescr, bmvdata.timeToGo.formattedWithUnit());
+    term.moveTo(v1, h,   "%s %s", getShortDescr('timeSinceFullCharge'), getFormattedWithUnit('timeSinceFullCharge'));
+    term.moveTo(v3, h++, "%s %s", getShortDescr('timeToGo'), getFormattedWithUnit('timeToGo'));
 
     h++; // empty line
     term.moveTo(v1, h++, menu1);
@@ -350,31 +368,31 @@ function displayConfiguration() {
     term.clear();
 
     term.moveTo(v1, h,   clearStr);
-    term.moveTo(v1, h++, "%s: %s", bmvdata.capacity.shortDescr, bmvdata.capacity.formattedWithUnit());
+    term.moveTo(v1, h++, "%s %s", getShortDescr('capacity'), getFormattedWithUnit('capacity'));
 
     term.moveTo(v1, h,   clearStr);
-    term.moveTo(v1, h++, "%s: %s", bmvdata.chargedVoltage.shortDescr, bmvdata.chargedVoltage.formattedWithUnit());
+    term.moveTo(v1, h++, "%s %s", getShortDescr('chargedVoltage'), getFormattedWithUnit('chargedVoltage'));
 
     term.moveTo(v1, h,   clearStr);
-    term.moveTo(v1, h++, "%s: %s", bmvdata.tailCurrent.shortDescr, bmvdata.tailCurrent.formattedWithUnit());
+    term.moveTo(v1, h++, "%s %s", getShortDescr('tailCurrent'), getFormattedWithUnit('tailCurrent'));
 
     term.moveTo(v1, h,   clearStr);
-    term.moveTo(v1, h++, "%s: %s", bmvdata.chargedDetectTime.shortDescr, bmvdata.chargedDetectTime.formattedWithUnit());
+    term.moveTo(v1, h++, "%s %s", getShortDescr('chargedDetectTime'), getFormattedWithUnit('chargedDetectTime'));
 
     term.moveTo(v1, h,   clearStr);
-    term.moveTo(v1, h++, "%s: %s", bmvdata.peukertCoefficient.shortDescr, bmvdata.peukertCoefficient.formattedWithUnit());
+    term.moveTo(v1, h++, "%s %s", getShortDescr('peukertCoefficient'), getFormattedWithUnit('peukertCoefficient'));
 
     term.moveTo(v1, h,   clearStr);
-    term.moveTo(v1, h++, "%s: %s", bmvdata.currentThreshold.shortDescr, bmvdata.currentThreshold.formattedWithUnit());
+    term.moveTo(v1, h++, "%s %s", getShortDescr('currentThreshold'), getFormattedWithUnit('currentThreshold'));
 
     term.moveTo(v1, h,   clearStr);
-    term.moveTo(v1, h++, "%s: %s", bmvdata.timeToGoDelta.shortDescr, bmvdata.timeToGoDelta.formattedWithUnit());
+    term.moveTo(v1, h++, "%s %s", getShortDescr('timeToGoDelta'), getFormattedWithUnit('timeToGoDelta'));
 
     term.moveTo(v1, h,   clearStr);
-    term.moveTo(v1, h++, "%s: %s", bmvdata.relayLowSOC.shortDescr, bmvdata.relayLowSOC.formattedWithUnit());
+    term.moveTo(v1, h++, "%s %s", getShortDescr('relayLowSOC'), getFormattedWithUnit('relayLowSOC'));
 
     term.moveTo(v1, h,   clearStr);
-    term.moveTo(v1, h++, "%s: %s", bmvdata.relayLowSOCClear.shortDescr, bmvdata.relayLowSOCClear.formattedWithUnit());
+    term.moveTo(v1, h++, "%s %s", getShortDescr('relayLowSOCClear'), getFormattedWithUnit('relayLowSOCClear'));
 
     h++; // empty line
     term.moveTo(v1, h++, menu1);
@@ -395,17 +413,17 @@ function displayMPPT() {
     // TODO: slow ==> remove
     term.clear();
 
-    term.moveTo(v1, h++, "%s: %s", bmvdata.MPPTbatteryVoltage.shortDescr, bmvdata.MPPTbatteryVoltage.formattedWithUnit());
-    term.moveTo(v1, h++, "%s: %s", bmvdata.MPPTpvVoltage.shortDescr, bmvdata.MPPTpvVoltage.formattedWithUnit());
-    term.moveTo(v1, h++, "%s: %s", bmvdata.MPPTchargingCurrent.shortDescr, bmvdata.MPPTchargingCurrent.formattedWithUnit());
-    term.moveTo(v1, h++, "%s: %s", bmvdata.MPPTloadCurrent.shortDescr, bmvdata.MPPTloadCurrent.formattedWithUnit());
-    term.moveTo(v1, h++, "%s: %s", bmvdata.MPPTbatteryTemperature.shortDescr, bmvdata.MPPTbatteryTemperature.formattedWithUnit());
-    term.moveTo(v1, h++, "%s: %s", bmvdata.MPPTisOverload.shortDescr, bmvdata.MPPTisOverload.formattedWithUnit());
-    term.moveTo(v1, h++, "%s: %s", bmvdata.MPPTisShortcutLoad.shortDescr, bmvdata.MPPTisShortcutLoad.formattedWithUnit());
-    term.moveTo(v1, h++, "%s: %s", bmvdata.MPPTisBatteryOverload.shortDescr, bmvdata.MPPTisBatteryOverload.formattedWithUnit());
-    term.moveTo(v1, h++, "%s: %s", bmvdata.MPPTisOverDischarge.shortDescr, bmvdata.MPPTisOverDischarge.formattedWithUnit());
-    term.moveTo(v1, h++, "%s: %s", bmvdata.MPPTisFullIndicator.shortDescr, bmvdata.MPPTisFullIndicator.formattedWithUnit());
-    term.moveTo(v1, h++, "%s: %s", bmvdata.MPPTisCharging.shortDescr, bmvdata.MPPTisCharging.formattedWithUnit());
+    term.moveTo(v1, h++, "%s %s", getShortDescr('MPPTbatteryVoltage'), getFormattedWithUnit('MPPTbatteryVoltage'));
+    term.moveTo(v1, h++, "%s %s", getShortDescr('MPPTpvVoltage'), getFormattedWithUnit('MPPTpvVoltage'));
+    term.moveTo(v1, h++, "%s %s", getShortDescr('MPPTchargingCurrent'), getFormattedWithUnit('MPPTchargingCurrent'));
+    term.moveTo(v1, h++, "%s %s", getShortDescr('MPPTloadCurrent'), getFormattedWithUnit('MPPTloadCurrent'));
+    term.moveTo(v1, h++, "%s %s", getShortDescr('MPPTbatteryTemperature'), getFormattedWithUnit('MPPTbatteryTemperature'));
+    term.moveTo(v1, h++, "%s %s", getShortDescr('MPPTisOverload'), getFormattedWithUnit('MPPTisOverload'));
+    term.moveTo(v1, h++, "%s %s", getShortDescr('MPPTisShortcutLoad'), getFormattedWithUnit('MPPTisShortcutLoad'));
+    term.moveTo(v1, h++, "%s %s", getShortDescr('MPPTisBatteryOverload'), getFormattedWithUnit('MPPTisBatteryOverload'));
+    term.moveTo(v1, h++, "%s %s", getShortDescr('MPPTisOverDischarge'), getFormattedWithUnit('MPPTisOverDischarge'));
+    term.moveTo(v1, h++, "%s %s", getShortDescr('MPPTisFullIndicator'), getFormattedWithUnit('MPPTisFullIndicator'));
+    term.moveTo(v1, h++, "%s %s", getShortDescr('MPPTisCharging'), getFormattedWithUnit('MPPTisCharging'));
 
     h++; // empty line
     term.moveTo(v1, h++, menu1);
@@ -544,10 +562,10 @@ var currentListener = function(newCurrent, oldCurrent, precision, timestamp)
 var displayinterval = setInterval(function () {
     bmvdata = vedirect.update();
     displayFunction();
-    let current       = bmvdata.batteryCurrent.formatted();
-    let midVoltage    = bmvdata.midVoltage.formatted();
-    let topVoltage    = 0; //bmvdata.topVoltage.formatted();
-    log_buckets(bmvdata.batteryCurrent.value); // current in mA
+    let current       = getFormatted('batteryCurrent');
+    let midVoltage    = getFormatted('midVoltage');
+    let topVoltage    = 0; //getFormatted('topVoltage');
+    log_buckets(getValue('batteryCurrent')); // current in mA
     let topSOC        = 0; //estimate_SOC(topVoltage, current);
     let bottomSOC     = estimate_SOC(midVoltage, current);
     // topSOC or bottomSOC being undefined means that the current is too high
@@ -623,7 +641,7 @@ term.on( 'key' , ( name , matches , data ) => {
         term.clear();
         //term.moveto(20, 10);
         let relayOnOff = 0;
-        if (bmvdata.relayState.value !== "OFF") relayOnOff = 1;
+        if (getValue('relayState') !== "OFF") relayOnOff = 1;
         if (relayOnOff == 1) {
             term.green('Switch relay off');
             vedirect.setRelay(0);

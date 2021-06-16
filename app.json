@@ -52,7 +52,7 @@
     },
     "ChargerLoadProtectionLowPriority" : {
         "alarmLevel"       : 0,
-        "absMinCurrent"    : -15, 
+        "absMinCurrent"    : -15,
         "absMaxCurrent"    : 1,
         "minVoltage"       : 24,
         "whenCurrentBelow" : 2,
@@ -69,10 +69,17 @@
         "whenCurrentAbove" : 16.5
     },
     "ChargerOverheatProtectionHighPriority" : {
-	"note"             : "occassionally the charger decides to discharge the battery (I < 0), while V > maxVoltage",
+        "note"             : "occassionally the charger decides to discharge the battery (I < 0), while V > maxVoltage",
         "alarmLevel"       : 2,
         "maxVoltage"       : 32,
         "whenCurrentBelow" : 0.1
+    },
+
+    "Tracer" : {
+        "note_interval_sec": "BMV delivers data every 2 sec",
+        "interval_sec"     : 2,
+        "note_isMaster"    : "set to 0, if a MT-5 is connected, 1 otherwise",
+        "isMaster"         : 1
     },
 
     "capacityByTemp": {
@@ -98,7 +105,6 @@
     },
 
     "restingCharge": {
-	"NOTE"       : "not yet used",
         "voltage"    : [11.935, 12.15, 12.35, 12.55,  12.795],
         "note_soc"   : "in percent",
         "soc"        : [ 0.0,   25.0,  50.0,  75.0,  100.0],

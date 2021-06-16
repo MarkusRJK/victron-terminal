@@ -1,16 +1,17 @@
 // Battery Management System (BMS)
 
 var VEdeviceClass = require( 've_bms_forecast' ).VictronEnergyDevice;
-var logger = require( 've_bms_forecast' ).logger;
 const interpolate = require('everpolate').linear;
 var fs = require('fs');
 const Math = require('mathjs');
 const MPPTclient = require('tracer').MPPTDataClient;
-let mppt = new MPPTclient(0);
 const Alarm = require('./protection.js').Alarm;
 const FlowProtection = require('./protection.js').FlowProtection;
 const ChargerOverheatProtection = require('./protection.js').ChargerOverheatProtection;
+var log4js = require('log4js');
 
+let mppt = new MPPTclient(0); // poking in intervals done below
+const logger = log4js.getLogger();
 
 // extend standard Array by unique function
 Array.prototype.unique = function() {
@@ -815,6 +816,9 @@ class BMS extends VEdeviceSerialAccu {
         this.chargerLoadProtectionHP = null;
         this.chargerOverheatProtectionHP = null;
 
+        this.tracerInterval = 2000;
+        this.isMaster = 1;
+
         const filename = __dirname + '/app.json';
         this.readConfig(filename);
 
@@ -846,10 +850,33 @@ class BMS extends VEdeviceSerialAccu {
         //this.lowerIncCapacity = new IntegralOverTime(this.bottomFlow.getCurrent());
         //this.upperIncCapacity = new IntegralOverTime(this.topFlow.getCurrent());
 
-        this.registerListener('ChangeList', this.setFlows.bind(this));
+        this.registerListener('ChangeList', this.processData.bind(this));
 
         this.hideBMVdisplayParams();
         this.createMPPTobjects();
+        this.startPolling();
+    }
+
+    startPolling() {
+        setInterval(function () {
+            if (module.exports.BMSInstance.isMaster) mppt.requestData();
+            let data = mppt.getData();
+
+            if (! data || ! data.batteryVoltage ) return; // no data yet
+            
+            let bmvdata = module.exports.BMSInstance.update();
+            bmvdata.MPPTbatteryVoltage.newValue     = data.batteryVoltage;
+            bmvdata.MPPTpvVoltage.newValue          = data.PvVoltage;
+            bmvdata.MPPTloadCurrent.newValue        = data.loadCurrent;
+            bmvdata.MPPTisOverload.newValue         = data.isOverload;
+            bmvdata.MPPTisShortcutLoad.newValue     = data.isLoadShortCircuit;
+            bmvdata.MPPTisBatteryOverload.newValue  = data.isBatteryOverload;
+            bmvdata.MPPTisOverDischarge.newValue    = data.isOverDischarge;
+            bmvdata.MPPTisFullIndicator.newValue    = data.isFullIndicator;
+            bmvdata.MPPTisCharging.newValue         = data.chargingIndicator;
+            bmvdata.MPPTbatteryTemperature.newValue = data.batteryTemperature;
+            bmvdata.MPPTchargingCurrent.newValue    = data.chargingCurrent;
+        }.bind(mppt), this.tracerInterval);
     }
 
     hideBMVdisplayParams() {
@@ -882,49 +909,62 @@ class BMS extends VEdeviceSerialAccu {
         this.lowerRestingC = new RestingCharacteristic(rc);
         this.upperRestingC = new RestingCharacteristic(rc);
         // FIXME: temporary use RestingChara. until DischargeChar is defined
-        this.lowerDischargeC = new RestingCharacteristic(rc);
+        this.lowerDischargeC = new RestingCharacteristic(rc);  
         this.upperDischargeC = new RestingCharacteristic(rc);
 
         // Protection and alarms - must be created before registerListener
-        this.alarms = new Alarm(logger, this.appConfig.Alarms.history, this.appConfig.Alarms.silenceInMin);
+        this.alarms = new Alarm(this.appConfig.Alarms.history, this.appConfig.Alarms.silenceInMin);
         this.bottomBattProtectionLP = new FlowProtection(0, 'Bottom battery' , this.appConfig.BatteryProtectionLowPriority, this.alarms, this);
         this.bottomBattProtectionHP = new FlowProtection(1, 'Bottom battery' , this.appConfig.BatteryProtectionHighPriority, this.alarms, this);
         this.topBattProtectionLP    = new FlowProtection(2, 'Top battery' , this.appConfig.BatteryProtectionLowPriority, this.alarms, this);
         this.topBattProtectionHP    = new FlowProtection(3, 'Top battery' , this.appConfig.BatteryProtectionHighPriority, this.alarms, this);
-        this.chargerProtectionLP = new FlowProtection(4, 'Charger' , this.appConfig.ChargerProtectionLowPriority, this.alarm, this);
-        this.chargerProtectionHP = new FlowProtection(5, 'Charger' , this.appConfig.ChargerProtectionHighPriority, this.alarm, this);
-        this.chargerLoadProtectionLP = new FlowProtection(6, 'Charger load' , this.appConfig.ChargerLoadProtectionLowPriority, this.alarm, this);
-        this.chargerLoadProtectionHP = new FlowProtection(7, 'Charger load' , this.appConfig.ChargerLoadProtectionHighPriority, this.alarm, this);
-        this.chargerOverheatProtectionHP = new ChargerOverheatProtection(8, 'Charger Overheat' , this.appConfig.ChargerOverheatProtectionHighPriority, this.alarm, this);
+        this.chargerProtectionLP = new FlowProtection(4, 'Charger' , this.appConfig.ChargerProtectionLowPriority, this.alarms, this);
+        this.chargerProtectionHP = new FlowProtection(5, 'Charger' , this.appConfig.ChargerProtectionHighPriority, this.alarms, this);
+        this.chargerLoadProtectionLP = new FlowProtection(6, 'Charger load' , this.appConfig.ChargerLoadProtectionLowPriority, this.alarms, this);
+        this.chargerLoadProtectionHP = new FlowProtection(7, 'Charger load' , this.appConfig.ChargerLoadProtectionHighPriority, this.alarms, this);
+        this.chargerOverheatProtectionHP = new ChargerOverheatProtection(8, 'Charger Overheat' , this.appConfig.ChargerOverheatProtectionHighPriority, this.alarms, this);
+
+        if ('Tracer' in this.appConfig) {
+            if ('interval_sec' in this.appConfig.Tracer)
+                this.tracerInterval = this.appConfig.Tracer.interval_sec * 1000;
+            if ('isMaster' in this.appConfig.Tracer)
+                this.isMaster = this.appConfig.Tracer.isMaster;
+        }
     }
 
-    protectFlow() {
-        logger.trace("BMS::protectFlow");
+    protectFlows(time) {
+        logger.trace("BMS::protectFlows");
         if (this.bottomBattProtectionLP) {
-            this.bottomBattProtectionLP.setFlow(this.bottomFlow);
+            this.bottomBattProtectionLP.setFlow(this.bottomFlow, time);
         }
         if (this.bottomBattProtectionHP) {
-            this.bottomBattProtectionHP.setFlow(this.bottomFlow);
+            this.bottomBattProtectionHP.setFlow(this.bottomFlow, time);
         }
         if (this.topBattProtectionLP) {
-            this.topBattProtectionLP.setFlow(this.topFlow);
+            this.topBattProtectionLP.setFlow(this.topFlow, time);
+        }
+        if (this.topBattProtectionHP) {
+            this.topBattProtectionHP.setFlow(this.topFlow, time);
+        }
+        if (this.chargerProtectionLP) {
+            this.chargerProtectionLP.setFlow(this.chargerFlow, time);
         }
         if (this.chargerProtectionHP) {
-            this.chargerProtectionHP.setFlow(this.chargerFlow);
+            this.chargerProtectionHP.setFlow(this.chargerFlow, time);
         }
         if (this.chargerLoadProtectionLP) {
-            this.chargerLoadProtectionLP.setFlow(this.loadFlow);
+            this.chargerLoadProtectionLP.setFlow(this.loadFlow, time);
         }
         if (this.chargerLoadProtectionHP) {
-            this.chargerLoadProtectionHP.setFlow(this.loadFlow);
+            this.chargerLoadProtectionHP.setFlow(this.loadFlow, time);
         }
         if (this.chargerOverheatProtectionHP) {
-            this.chargerOverheatProtectionHP.setFlow(this.pvFlow);
+            this.chargerOverheatProtectionHP.setFlow(this.pvFlow, time);
         }
     }
 
     setFlows(changedMap, timeStamp) {
-
+        logger.trace('BMS::setFlows');
         if (changedMap.has('midVoltage')) {
             this.bottomFlow.setVoltage(changedMap.get('midVoltage').newValue);
         }
@@ -957,11 +997,17 @@ class BMS extends VEdeviceSerialAccu {
             this.pvFlow.setCurrent(current);
         }
         if (changedMap.has('MPPTloadCurrent')) {
-            this.loadFlow.setCurrent(changedMap.get('MPPTloadCurrent').newValue);
+            // for consistency: everything out ot the battery
+            // is negative. MPPTloadCurrent is positive, it does not quite come
+            // out of the battery, yet it should be negative...
+            this.loadFlow.setCurrent(-changedMap.get('MPPTloadCurrent').newValue);
         }
-        this.protectFlow();
     }
 
+    processData(changedMap, timeStamp) {
+        this.setFlows(changedMap, timeStamp);
+        this.protectFlows(timeStamp);
+    }
 
     setAccuChainVoltage(newVoltage, oldVoltage, timeStamp, key) {
         logger.trace("BMS::setAccuChainVoltage");
@@ -973,7 +1019,7 @@ class BMS extends VEdeviceSerialAccu {
         // the later of which balances the voltage (exactly) between
         // the two blocks in series.
 
-        this.protectFlow();
+        this.protectFlows();
     }
 
     // \param newCurrent, oldCurrent, timeStamp as string (need conversion to numbers)
@@ -987,7 +1033,7 @@ class BMS extends VEdeviceSerialAccu {
         this.bottomFlow.setCurrent(current);
         this.topFlow.setCurrent(current);
 
-        this.protectFlow();
+        this.protectFlows();
 
         let time = timeStamp * 0.001; // converts from milliseconds to SI (seconds)
         //this.lowerIncCapacity.add(this.bottomFlow.getCurrent(), time);
@@ -1038,32 +1084,10 @@ class BMS extends VEdeviceSerialAccu {
         bmvdata.MPPTisOverDischarge    = this.createObject(0,  "", "MPPT Over Discharged");
         bmvdata.MPPTisFullIndicator    = this.createObject(0,  "", "MPPT Batt. Full");
         bmvdata.MPPTisCharging         = this.createObject(0,  "", "MPPT Charging");
-        bmvdata.MPPTbatteryTemperature = this.createObject(1,  "C", "MPPT Batt. Temp.");
+        bmvdata.MPPTbatteryTemperature = this.createObject(1,  "°C", "MPPT Batt. Temp.");
         bmvdata.MPPTchargingCurrent    = this.createObject(1,  "A", "MPPT Charge Current");
     }
 }
-
-
-setInterval(function () {
-    mppt.requestData();
-    let data = mppt.getData();
-
-    if (! data || ! data.batteryVoltage ) return; // no data yet
-    if (! module.exports.BMSInstance) return;
-    
-    let bmvdata = module.exports.BMSInstance.update();
-    bmvdata.MPPTbatteryVoltage.newValue     = data.batteryVoltage;
-    bmvdata.MPPTpvVoltage.newValue          = data.PvVoltage;
-    bmvdata.MPPTloadCurrent.newValue        = data.loadCurrent;
-    bmvdata.MPPTisOverload.newValue         = data.isOverload;
-    bmvdata.MPPTisShortcutLoad.newValue     = data.isLoadShortCircuit;
-    bmvdata.MPPTisBatteryOverload.newValue  = data.isBatteryOverload;
-    bmvdata.MPPTisOverDischarge.newValue    = data.isOverDischarge;
-    bmvdata.MPPTisFullIndicator.newValue    = data.isFullIndicator;
-    bmvdata.MPPTisCharging.newValue         = data.chargingIndicator;
-    bmvdata.MPPTbatteryTemperature.newValue = data.batteryTemperature;
-    bmvdata.MPPTchargingCurrent.newValue    = data.chargingCurrent;
-}.bind(mppt), 2000); // every 2 seconds
 
 
 module.exports.BMSInstance = new BMS();

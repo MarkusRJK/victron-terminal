@@ -1,11 +1,14 @@
+var log4js = require('log4js');
+
+const logger = log4js.getLogger();
 
 const minutesToMS = 60 * 1000;
 
 // singleton class Alarm
 class Alarm {
-    constructor(logger, historyLength, silenceInMinutes) {
+    constructor(historyLength, silenceInMinutes) {
+        logger.trace('Alarm::constructor');
         if(! Alarm.instance){
-	    this.logger = logger;
             this.alarmHistory = [];
             if (historyLength)
                 this.historyLength = 20; // default
@@ -23,8 +26,8 @@ class Alarm {
     // try to reduce to historyLength, yet keep all active alarms
     reduce() {
         if (this.alarmHistory.length <= this.historyLength) return;
-	let filteredHistory = this.alarmHistory.filter((a) => a.isActive);
-	this.alarmHistory = filteredHistory;
+        let filteredHistory = this.alarmHistory.filter((a) => a.isActive);
+        this.alarmHistory = filteredHistory;
     }
 
     persistJSON() {
@@ -54,17 +57,22 @@ class Alarm {
         let output = "\n";
         for (let i = 0; i < this.alarmHistory.length; ++i)
             output += this.formatAlarm(this.alarmHistory[i], separator);
-	if (this.alarmHistory.length === 0) return "No alarms";
+        if (this.alarmHistory.length === 0) return "No alarms";
         return output;
     }
 
-    raise(id, l, failureText, actionText) {
+    recentAlarm() {
+        if (this.alarmHistory.length) return this.alarmHistory[0];
+        else return null;
+    }
+    
+    raise(id, l, failureText, actionText, eventTime) {
+	if (! eventTime) eventTime = new Date();
 
-	if (this.alarmHistory.filter(a => a.isActive && !a.isAckn).some(a => a.id === id))
-	    return; // already entered 
-
-        let alarm = { time     : new Date(),
-		      id       : id,
+        if (this.alarmHistory.filter(a => a.isActive && !a.isAckn).some(a => a.id === id))
+            return; // already entered 
+        let alarm = { time     : eventTime,
+                      id       : id,
                       level    : l,
                       failure  : failureText,
                       action   : actionText,
@@ -72,21 +80,21 @@ class Alarm {
                       isActive : true,
                       isAudible: (l >= 1)
                     };
-        this.alarmHistory.push(alarm);
+        this.alarmHistory.unshift(alarm);
         this.reduce();
-        if (l === 2) this.logger.error("ALARM: " + JSON.stringify(alarm));
-	else this.logger.warn("ALARM: " + JSON.stringify(alarm));
+        if (l === 2) logger.error("ALARM: " + JSON.stringify(alarm));
+        else logger.warn("ALARM: " + JSON.stringify(alarm));
     }
 
     acknowledge(id) {
-	const e = this.alarmHistory.find((element) => element.id === id);
-	if (e) e.isAckn = true;
+        const e = this.alarmHistory.find((element) => element.id === id);
+        if (e) e.isAckn = true;
     }
 
     // silence temporary for 5 minutes at any time
     silence(id) {
-	const i = this.alarmHistory.findIndex((element) => element.id === id);
-	if (i < 0 || i >= this.alarmHistory.length) return;
+        const i = this.alarmHistory.findIndex((element) => element.id === id);
+        if (i < 0 || i >= this.alarmHistory.length) return;
         this.alarmHistory[i].isAudible = false;
         setTimeout(function() {
             this.alarmHistory[i].isAudible = true;
@@ -96,8 +104,8 @@ class Alarm {
 
     // first acknowledge then clear
     clear(id, force) {
-	const i = this.alarmHistory.findIndex((element) => element.id === id);
-	if (i < 0 || i >= this.alarmHistory.length) return;
+        const i = this.alarmHistory.findIndex((element) => element.id === id);
+        if (i < 0 || i >= this.alarmHistory.length) return;
         if (force || this.alarmHistory[i].isAckn) {
             this.alarmHistory[i].isActive  = false;
             this.alarmHistory[i].isAudible = false;
@@ -105,11 +113,11 @@ class Alarm {
     }
 
     isAnyAudible() {
-	return this.alarmHistory.some(a => a.isAudible);
+        return this.alarmHistory.some(a => a.isAudible);
     }
 
     isAnyActive() {
-	return this.alarmHistory.some(a => a.isActive);
+        return this.alarmHistory.some(a => a.isActive);
     }
 }
 
@@ -121,7 +129,7 @@ class FlowProtection {
     // \param config file in JSON containing Alarms and Protection settings
     // \param actor is the victron control
     constructor(id, name, config, alarm, actor) {
-	this.id     = id * 100;
+        this.id     = id * 100;
         this.name   = name
         this.config = config;
         this.alarm  = alarm;
@@ -129,48 +137,47 @@ class FlowProtection {
     }
 
     setFlow(flow) {
-	if (! flow) return; // on null and undefined return
+        if (! flow) return; // on null and undefined return
         let I = flow.getCurrent();
         let U = flow.getVoltage();
-	if (U === 0) return; // there is no battery voltage of 0
+        if (U === 0) return; // there is no battery voltage of 0
         let Istr = String(I) + "A";
         let Ustr = String(U) + "V";
 
         if (I <= this.config.absMinCurrent) {
             this.alarm.raise(this.id + 0, this.config.alarmLevel,
-	    		     this.name + ": too much load " + Istr,
+                             this.name + ": too much load " + Istr,
                              "Removing load from battery");
+            // FIXME: to be integer put action text only if alarmLevel === 2
             if (this.config.alarmLevel === 2) this.actor.setRelay(0);
         }
-	else {
-	    this.logger.debug('FlowProtection::setFlow - this.alarm = ' + this.alarm);
-	    this.logger.debug('FlowProtection::setFlow - this.id = ' + this.id);
-	    this.alarm.clear(this.id + 0, true); // FIXME: Hysteresis needed
-	}
+        else {
+            this.alarm.clear(this.id + 0, true); // FIXME: Hysteresis needed
+        }
 
         if (I >= this.config.absMaxCurrent) {
             this.alarm.raise(this.id + 1, this.config.alarmLevel,
-			     this.name + ": high charge current " + Istr,
+                             this.name + ": high charge current " + Istr,
                              "Switching load on battery");
-            //if (this.config.alarmLevel === 2) this.actor.setRelay(1);
+            if (this.config.alarmLevel === 2) this.actor.setRelay(1);
         }
-//	else this.alarm.clear(this.id + 1, true);
+        else this.alarm.clear(this.id + 1, true);
 
         if (U <= this.config.minVoltage && I <= this.config.whenCurrentBelow) {
             this.alarm.raise(this.id + 2, this.config.alarmLevel,
-			     this.name + ": battery capacity too low; voltage drop to " + Ustr + " for small current " + Istr,
+                             this.name + ": battery capacity too low; voltage drop to " + Ustr + " for small current " + Istr,
                              "Removing load from battery");
-            //if (this.config.alarmLevel === 2) this.actor.setRelay(0);
+            if (this.config.alarmLevel === 2) this.actor.setRelay(0);
         }
-//	else this.alarm.clear(this.id + 2, true);
+        else this.alarm.clear(this.id + 2, true);
 
         if (U >= this.config.maxVoltage && I >= this.config.whenCurrentAbove) {
             this.alarm.raise(this.id + 3, this.config.alarmLevel,
-			     this.name + ": battery capacity too high; voltage " + Ustr + " and charging at " + Istr,
+                             this.name + ": battery capacity too high; voltage " + Ustr + " and charging at " + Istr,
                              "Switching load on battery");
-            //if (this.config.alarmLevel === 2) this.actor.setRelay(1);
+            if (this.config.alarmLevel === 2) this.actor.setRelay(1);
         }
-//	else this.alarm.clear(this.id + 3, true);
+        else this.alarm.clear(this.id + 3, true);
     }
 }
 
@@ -205,7 +212,7 @@ class DeviceProtection {
 //         vapourization of the incoming PV energy.
 class ChargerOverheatProtection {
     constructor(id, name, config, alarm, actor) {
-	this.id     = id;
+        this.id     = id * 100;
         this.name   = name;
         this.config = config;
         this.alarm  = alarm;
@@ -213,23 +220,25 @@ class ChargerOverheatProtection {
     }
 
     setFlow(flow) {
-	if (! flow) return; // on null and undefined return
+        if (! flow) return; // on null and undefined return
         let I = flow.getCurrent();
         let U = flow.getVoltage();
-	if (U === 0) return; // there is no PV voltage of 0
+        if (U === 0) return; // there is no PV voltage of 0
         let Istr = String(I) + "A";
         let Ustr = String(U) + "V";
-return;
+
         if (U >= this.config.maxVoltage && I <= this.config.whenCurrentBelow) {
-            this.alarm.raise(4, this.config.alarmLevel,
-			     this.name + ": charger discharging; voltage " + Ustr + "V and charging at " + Istr + "A",
+            this.alarm.raise(this.id + 4, this.config.alarmLevel,
+                             this.name + ": charger discharging; voltage " + Ustr + "V and charging at " + Istr + "A",
                              "Switching load on battery");
-            if (this.config.alarmLevel === 2) this.actor.setRelay(1);
-            // FIXME: if there is a "secret" reset command for the charger, reset the charger.
-	    //        Otherwise sound a high prio alarm to get the charger physically disconnected
-	    //        and reconnected.
+            // For now just raise the alarm. The MPPT charger needs to be reset.
+            // There is no obvious command to reset the MPPT charger and for now
+            // it has to be done manually by pulling all fuses to fully disconnect
+            // the charger.
+            // It is unclear whether switching on load would help.
+            //if (this.config.alarmLevel === 2) this.actor.setRelay(1);
         }
-//	else this.alarm.clear(this.id + 3, true);
+        else this.alarm.clear(this.id + 4, true);
     }
 }
 
