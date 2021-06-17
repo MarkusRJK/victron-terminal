@@ -17,16 +17,7 @@ var log4js = require('log4js');
 //****************************************************
 // LOGGING
 
-log4js.configure({
-  appenders: {
-    everything: { type: 'file', filename: '/var/log/debug.log' }
-  },
-  categories: {
-    default: { appenders: [ 'everything' ], level: 'debug' }
-  }
-});
-
-const logger = log4js.getLogger();
+const logger = log4js.getLogger('silent');
 
 
 //****************************************************

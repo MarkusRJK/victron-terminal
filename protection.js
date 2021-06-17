@@ -1,6 +1,7 @@
 var log4js = require('log4js');
+const Math = require('mathjs');
 
-const logger = log4js.getLogger();
+const logger = log4js.getLogger('silent');
 
 const minutesToMS = 60 * 1000;
 
@@ -10,6 +11,7 @@ class Alarm {
         logger.trace('Alarm::constructor');
         if(! Alarm.instance){
             this.alarmHistory = [];
+            this.actionLevel = 1;
             if (historyLength)
                 this.historyLength = 20; // default
             else
@@ -21,6 +23,11 @@ class Alarm {
             Alarm.instance = this;
         }
         return Alarm.instance;
+    }
+
+    // \param level from which (incl.) on the action is performed
+    setActionLevel(level) {
+        this.actionLevel = level;
     }
 
     // try to reduce to historyLength, yet keep all active alarms
@@ -41,8 +48,10 @@ class Alarm {
         case 1: levelTxt = 'medium'; break;
         case 2: levelTxt = 'high'; break;
         }
+        let action = a.action;
+        if (a.level < this.actionLevel) action = '';
         // add String(a.time)      + separator + with good format
-        return levelTxt + separator + a.failure + separator + a.action + '\n';
+        return levelTxt + separator + a.failure + separator + action + '\n';
     }
 
     // \param separator is ',' for CSV, default is tab
@@ -66,24 +75,28 @@ class Alarm {
         else return null;
     }
     
-    raise(id, l, failureText, actionText, eventTime) {
-	if (! eventTime) eventTime = new Date();
+    raise(id, alevel, failureText, actionText, eventTime) {
+        logger.trace('Alarm::raise(' + id + ', ' + alevel + ')');
+        if (! eventTime) eventTime = new Date();
 
-        if (this.alarmHistory.filter(a => a.isActive && !a.isAckn).some(a => a.id === id))
-            return; // already entered 
+        let activeUnacknAlarms = this.alarmHistory.filter((a) => (a.isActive && !a.isAckn));
+        if (activeUnacknAlarms.some((a) => (a.id === id))) {
+            logger.debug('Alarm already entered');
+            return; // already entered
+        }
         let alarm = { time     : eventTime,
                       id       : id,
-                      level    : l,
+                      level    : alevel,
                       failure  : failureText,
                       action   : actionText,
                       isAckn   : false,
                       isActive : true,
-                      isAudible: (l >= 1)
+                      isAudible: (alevel >= 1)
                     };
         this.alarmHistory.unshift(alarm);
         this.reduce();
-        if (l === 2) logger.error("ALARM: " + JSON.stringify(alarm));
-        else logger.warn("ALARM: " + JSON.stringify(alarm));
+        // log ALARMs as fatal so they are always in the log
+        logger.fatal("ALARM: " + JSON.stringify(alarm));
     }
 
     acknowledge(id) {
@@ -104,7 +117,8 @@ class Alarm {
 
     // first acknowledge then clear
     clear(id, force) {
-        const i = this.alarmHistory.findIndex((element) => element.id === id);
+        logger.trace('Alarm::clear(' + id + ')');
+        const i = this.alarmHistory.findIndex((element) => (element.id === id));
         if (i < 0 || i >= this.alarmHistory.length) return;
         if (force || this.alarmHistory[i].isAckn) {
             this.alarmHistory[i].isActive  = false;
@@ -149,7 +163,7 @@ class FlowProtection {
                              this.name + ": too much load " + Istr,
                              "Removing load from battery");
             // FIXME: to be integer put action text only if alarmLevel === 2
-            if (this.config.alarmLevel === 2) this.actor.setRelay(0);
+            if (this.config.alarmLevel >= 1) this.actor.setRelay(0);
         }
         else {
             this.alarm.clear(this.id + 0, true); // FIXME: Hysteresis needed
@@ -159,23 +173,23 @@ class FlowProtection {
             this.alarm.raise(this.id + 1, this.config.alarmLevel,
                              this.name + ": high charge current " + Istr,
                              "Switching load on battery");
-            if (this.config.alarmLevel === 2) this.actor.setRelay(1);
+            if (this.config.alarmLevel >= 1) this.actor.setRelay(1);
         }
         else this.alarm.clear(this.id + 1, true);
 
-        if (U <= this.config.minVoltage && I <= this.config.whenCurrentBelow) {
+        if (U <= this.config.minVoltage && Math.abs(I) <= Math.abs(this.config.whenCurrentBelow)) {
             this.alarm.raise(this.id + 2, this.config.alarmLevel,
                              this.name + ": battery capacity too low; voltage drop to " + Ustr + " for small current " + Istr,
                              "Removing load from battery");
-            if (this.config.alarmLevel === 2) this.actor.setRelay(0);
+            if (this.config.alarmLevel >= 1) this.actor.setRelay(0);
         }
         else this.alarm.clear(this.id + 2, true);
 
-        if (U >= this.config.maxVoltage && I >= this.config.whenCurrentAbove) {
+        if (U >= this.config.maxVoltage && Math.abs(I) >= Math.abs(this.config.whenCurrentAbove)) {
             this.alarm.raise(this.id + 3, this.config.alarmLevel,
                              this.name + ": battery capacity too high; voltage " + Ustr + " and charging at " + Istr,
                              "Switching load on battery");
-            if (this.config.alarmLevel === 2) this.actor.setRelay(1);
+            if (this.config.alarmLevel >= 1) this.actor.setRelay(1);
         }
         else this.alarm.clear(this.id + 3, true);
     }
@@ -229,7 +243,7 @@ class ChargerOverheatProtection {
 
         if (U >= this.config.maxVoltage && I <= this.config.whenCurrentBelow) {
             this.alarm.raise(this.id + 4, this.config.alarmLevel,
-                             this.name + ": charger discharging; voltage " + Ustr + "V and charging at " + Istr + "A",
+                             this.name + ": charger discharging; voltage " + Ustr + " and charging at " + Istr + "A",
                              "Switching load on battery");
             // For now just raise the alarm. The MPPT charger needs to be reset.
             // There is no obvious command to reset the MPPT charger and for now

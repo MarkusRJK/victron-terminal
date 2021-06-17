@@ -54,17 +54,20 @@
         "alarmLevel"       : 0,
         "absMinCurrent"    : -15,
         "absMaxCurrent"    : 1,
+        "note_whenCurrentBelow": "disabled",
         "minVoltage"       : 24,
-        "whenCurrentBelow" : 2,
+        "whenCurrentBelow" : 0,
         "maxVoltage"       : 27,
-        "whenCurrentAbove" : 0
+        "whenCurrentAbove" : 13
     },
     "ChargerLoadProtectionHighPriority" : {
         "alarmLevel"       : 2,
         "absMinCurrent"    : -20, 
         "absMaxCurrent"    : 1,
         "minVoltage"       : 23,
-        "whenCurrentBelow" : 2,
+        "note_whenCurrentBelow": "disabled",
+        "whenCurrentBelow" : 0,
+        "note_maxVoltage"  : "Derived from max load power=20A*24V/29V",
         "maxVoltage"       : 29,
         "whenCurrentAbove" : 16.5
     },
@@ -115,6 +118,3 @@
     }
 
 }
-
-
-

@@ -11,7 +11,7 @@ const ChargerOverheatProtection = require('./protection.js').ChargerOverheatProt
 var log4js = require('log4js');
 
 let mppt = new MPPTclient(0); // poking in intervals done below
-const logger = log4js.getLogger();
+const logger = log4js.getLogger('silent');
 
 // extend standard Array by unique function
 Array.prototype.unique = function() {
