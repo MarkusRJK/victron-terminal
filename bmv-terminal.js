@@ -207,8 +207,9 @@ function displayAlarms() {
     var v1 = 2;  // first vertical position
     var h  = 2;
     
-    term.moveTo(v1, h++, "Alarm History:");
-    term.moveTo(v1, h, "%s", vedirect.listAlarms());
+    term.moveTo(v1, h++, "Alarm History:\n\n");
+    //term.moveTo(v1, h, "%s", vedirect.listAlarms());
+    console.log(vedirect.listAlarms());
 }
 
 function displayCurrentAndHistory() {

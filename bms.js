@@ -9,9 +9,12 @@ const Alarm = require('./protection.js').Alarm;
 const FlowProtection = require('./protection.js').FlowProtection;
 const ChargerOverheatProtection = require('./protection.js').ChargerOverheatProtection;
 var log4js = require('log4js');
+var solarState = require( './forecast' ).solarState;
+var pvInput = require( './forecast' ).pvInput;
+
 
 let mppt = new MPPTclient(0); // poking in intervals done below
-const logger = log4js.getLogger('silent');
+const logger = log4js.getLogger();
 
 // extend standard Array by unique function
 Array.prototype.unique = function() {
@@ -715,7 +718,11 @@ class VEdeviceSerialAccu extends VEdeviceClass {
         //         this.rxtx.runOnFunction('topVoltage', bmvdata.topVoltage);
         //     }).bind(this)
         // );
-        this.registerComponent('V'); // create upperVoltage in Cache
+        // FIXME: topVoltage still not correctly updated - possibly needs the "dirty"
+        //        cache handling
+        // create upperVoltage in Cache - this would be created dynamically
+        // but its existence is required to push the 'on' function
+        this.registerComponent('V'); // upperVoltage
         this.cache.upperVoltage.on.push(
             ((newValue, oldValue, packageArrivalTime, key) => {
                 if (this.cache.topVoltage.newValue !== null) return; // topValue already set
@@ -731,7 +738,9 @@ class VEdeviceSerialAccu extends VEdeviceClass {
                 //this.rxtx.runOnFunction('topVoltage', this.cache.topVoltage);
             }).bind(this)
         );
-        this.registerComponent('VM'); // create upperVoltage in Cache
+        // create midVoltage in Cache - this would be created dynamically
+        // but its existence is required to push the 'on' function
+        this.registerComponent('VM'); // midVoltage
         this.cache.midVoltage.on.push(
             ((newValue, oldValue, packageArrivalTime, key) => {
                 if (this.cache.topVoltage.newValue !== null) return; // topValue already set
@@ -1005,8 +1014,15 @@ class BMS extends VEdeviceSerialAccu {
     }
 
     processData(changedMap, timeStamp) {
+        logger.trace('BMS::processData');
         this.setFlows(changedMap, timeStamp);
         this.protectFlows(timeStamp);
+        //if (pvInput) pvInput.addFlow(this.pvFlow, timeStamp);
+        if (pvInput) pvInput.setFlow(this.chargerFlow, timeStamp);
+        else {
+            logger.warn('BMS::processData - pvInput not yet available');
+            pvInput = require( './forecast' ).pvInput;
+        }
     }
 
     setAccuChainVoltage(newVoltage, oldVoltage, timeStamp, key) {
@@ -1069,7 +1085,7 @@ class BMS extends VEdeviceSerialAccu {
     listAlarms() {
         if (this.alarms)
             return this.alarms.persistPlain('\t');
-        else return "No alarms";
+        else return "\x1b[1m\x1b[31mNo Alarm History\x1b[0m";
     }
 
     createMPPTobjects() {

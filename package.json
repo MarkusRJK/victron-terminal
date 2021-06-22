@@ -15,19 +15,19 @@
     "Ve.direct"
   ],
   "dependencies": {
-      "ve_bms_forecast": "git+https://git@github.com/MarkusRJK/ve_bms_forecast.git#add-singleton_class_ES6",
-      "date": "^1.0.2",
-      "log4js": "^2.0.0",
-      "mathjs": "^5.1.0",
-      "everpolate": "0.0.3",
-      "terminal-kit": "^2.1.0"
+    "date": "^1.0.2",
+    "everpolate": "0.0.3",
+    "log4js": "^2.0.0",
+    "mathjs": "^5.1.0",
+    "terminal-kit": "^2.1.0",
+    "ve_bms_forecast": "git+https://git@github.com/MarkusRJK/ve_bms_forecast.git#add-singleton_class_ES6"
   },
   "author": {
     "name": "Markus Kohler <Markus.Kohler@udo.edu>"
   },
   "scripts": {
-      "start": "screen -r || (screen -m -S solar nodejs bmv-terminal.js)",
-      "postinstall": "mkdir -p node_modules/; git clone https://git@github.com/MarkusRJK/tracer.git -b javascript_client; mv tracer/javascript node_modules/tracer; rm -rf tracer"
+    "start": "screen -r || (screen -m -S solar nodejs bmv-terminal.js)",
+    "postinstall": "mkdir -p node_modules/; git clone https://git@github.com/MarkusRJK/tracer.git -b javascript_client; mv tracer/javascript node_modules/tracer; rm -rf tracer"
   },
   "license": "MIT"
 }

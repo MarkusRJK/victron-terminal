@@ -5,7 +5,17 @@ const logger = log4js.getLogger('silent');
 
 const minutesToMS = 60 * 1000;
 
+const cRed    = "\x1b[5m\x1b[1m\x1b[31m";
+const cGreen  = "\x1b[1m\x1b[32m";
+const cYellow = "\x1b[33m";
+const cReset  = "\x1b[0m";
+
 // singleton class Alarm
+// TODO: implement new policy:
+// low priority alarm:    alarm notification of possibly harmful state (no action)
+// medium priority alarm: alarm notification with action
+// high priority alarm:   alarm notification with possible action which
+//                        requires use interference
 class Alarm {
     constructor(historyLength, silenceInMinutes) {
         logger.trace('Alarm::constructor');
@@ -42,16 +52,28 @@ class Alarm {
     }
 
     formatAlarm(a, separator) {
-        let levelTxt;
+        let levelTxt = '';
+
+        if (!a.isActive) levelTxt = '(';
         switch (a.level) {
-        case 0: levelTxt = 'low'; break;
-        case 1: levelTxt = 'medium'; break;
-        case 2: levelTxt = 'high'; break;
+        case 0: levelTxt += 'low'; break;
+        case 1: levelTxt += 'medium'; break;
+        case 2: levelTxt += 'high'; break;
         }
+        if (!a.isActive) levelTxt += ')';
+        let t = new Date(a.time).toTimeString().substring(0,5);
         let action = a.action;
         if (a.level < this.actionLevel) action = '';
-        // add String(a.time)      + separator + with good format
-        return levelTxt + separator + a.failure + separator + action + '\n';
+        let output = t + separator + levelTxt + separator + a.failure +
+            separator + action + '\n';
+        //if (a.isActive) {h
+            switch(a.level) {
+            case 1: return cYellow + output + cReset; break;
+            case 2: return cRed + output + cReset; break;
+            default: return output; break;
+            }
+        //}
+        //return output;
     }
 
     // \param separator is ',' for CSV, default is tab
@@ -66,7 +88,7 @@ class Alarm {
         let output = "\n";
         for (let i = 0; i < this.alarmHistory.length; ++i)
             output += this.formatAlarm(this.alarmHistory[i], separator);
-        if (this.alarmHistory.length === 0) return "No alarms";
+        if (this.alarmHistory.length === 0) return cGreen + "No alarms" + cReset;
         return output;
     }
 
@@ -81,6 +103,7 @@ class Alarm {
 
         let activeUnacknAlarms = this.alarmHistory.filter((a) => (a.isActive && !a.isAckn));
         if (activeUnacknAlarms.some((a) => (a.id === id))) {
+            // FIXME: also consider time - if two alarms too close, ignore second
             logger.debug('Alarm already entered');
             return; // already entered
         }
@@ -121,6 +144,8 @@ class Alarm {
         const i = this.alarmHistory.findIndex((element) => (element.id === id));
         if (i < 0 || i >= this.alarmHistory.length) return;
         if (force || this.alarmHistory[i].isAckn) {
+            if (this.alarmHistory[i].isActive !== false)
+                logger.fatal("ALARM cleared: " + JSON.stringify(this.alarmHistory[i]));
             this.alarmHistory[i].isActive  = false;
             this.alarmHistory[i].isAudible = false;
         }
@@ -197,7 +222,7 @@ class FlowProtection {
 
 
 
-// Protection / Alarm if BMV alarm
+// Protection / Alarm if BMV alarm or MPPT alarming bits
 class DeviceProtection {
     constructor() {};
 
@@ -243,14 +268,15 @@ class ChargerOverheatProtection {
 
         if (U >= this.config.maxVoltage && I <= this.config.whenCurrentBelow) {
             this.alarm.raise(this.id + 4, this.config.alarmLevel,
-                             this.name + ": charger discharging; voltage " + Ustr + " and charging at " + Istr + "A",
+                             this.name + ": charger discharging; voltage " + Ustr +
+                             " and charging at " + Istr,
                              "Switching load on battery");
             // For now just raise the alarm. The MPPT charger needs to be reset.
             // There is no obvious command to reset the MPPT charger and for now
             // it has to be done manually by pulling all fuses to fully disconnect
             // the charger.
             // It is unclear whether switching on load would help.
-            //if (this.config.alarmLevel === 2) this.actor.setRelay(1);
+            //FIXME not good: if (this.config.alarmLevel === 2) this.actor.setRelay(1);
         }
         else this.alarm.clear(this.id + 4, true);
     }

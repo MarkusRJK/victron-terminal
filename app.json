@@ -75,7 +75,7 @@
         "note"             : "occassionally the charger decides to discharge the battery (I < 0), while V > maxVoltage",
         "alarmLevel"       : 2,
         "maxVoltage"       : 32,
-        "whenCurrentBelow" : 0.1
+        "whenCurrentBelow" : -0.001
     },
 
     "Tracer" : {
