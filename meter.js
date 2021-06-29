@@ -20,16 +20,16 @@ class EnergyAndChargeMeter {
     resetAccumulations() {
         logger.debug('EnergyAndChargeMeter::resetAccumulations'); // FIXME: revert to trace
         // E = Energy: is in Watt milliseconds - needs to be converted to Wh
-        this.E = {
-            directUse:   0,
-            absorbed:    0,
-            drawn:       0,
-            loss:        0,
+        this.EWMs = {
+            directUse: 0,
+            absorbed:  0,
+            drawn:     0,
+            loss:      0,
         }
         // C = capacity: is in Ampere milliseconds - needs to be converted to Ah
-        this.C = {
-            AMsAbsorbed: 0,
-            AMsDrawn:    0,
+        this.CAMs = {
+            absorbed:  0,
+            drawn:     0,
         }
     }
 
@@ -38,33 +38,34 @@ class EnergyAndChargeMeter {
     setStart() {
         logger.debug('EnergyAndChargeMeter::setStart'); // FIXME: revert to trace
         // E = Energy: is in Watt milliseconds - needs to be converted to Wh
-        this.Estart = {
-            directUse:   this.E.directUse,
-            absorbed:    this.E.absorbed,
-            drawn:       this.E.drawn,
-            loss:        this.E.loss,
+        this.EWMsStart = {
+            directUse: this.EWMs.directUse,
+            absorbed:  this.EWMs.absorbed,
+            drawn:     this.EWMs.drawn,
+            loss:      this.EWMs.loss,
         }
         // C = capacity: is in Ampere milliseconds - needs to be converted to Ah
-        this.Cstart = {
-            AMsAbsorbed: this.C.AMsAbsorbed,
-            AMsDrawn:    this.C.AMsDrawn,
+        this.CAMsStart = {
+            absorbed:  this.CAMs.absorbed,
+            drawn:     this.CAMs.drawn,
         }
     }
 
     setFlows(UPv, UBat, IPv, ILoad, IBat, relayState, time) {
         logger.trace('EnergyAndChargeMeter::setFlows');
-        this.UPv   = UPv;
-        this.UBat  = UBat;
-        this.IPv   = IPv;
-        this.ILoad = ILoad;
-        this.IBat  = IBat;
+        this.UPv    = UPv;
+        this.UBat   = UBat;
+        this.IPv    = IPv;
+        this.ILoad  = ILoad;
+        this.IBat   = IBat;
+        this.RState = relayState;
         
-        if (time !== 0) this.accumulate(relayState, time);
+        if (time !== 0) this.accumulate(time);
         
         this.lastTime = time;
     }   
 
-    accumulate(relayState, time) {
+    accumulate(time) {
         logger.trace('EnergyAndChargeMeter::accumulate');
         if (!this.lastTime) {
             this.lastTime = time;
@@ -75,24 +76,30 @@ class EnergyAndChargeMeter {
         
         // E = Energy
         let C = this.IBat * timeDiff;
+        // IBat > 0 ==> laden, IPv >= 0, all U* >= 0, ILoad <= 0
+        // logger.debug(this.IBat + ' ' + this.UBat  + ' ' + this.IPv +
+        //           ' ' + this.UPv + ' ' +
+        //           this.ILoad  + ' ' + timeDiff);
         if (this.IBat > 0) { // charging
             // FIXME: for correct metering determine whether ILoad is contained in IPv?
-            //        it appears IPv = ILoad + IBat (no load on battery)
-            if (relayState === 'ON')
-                this.E.directUse   += this.UBat * (this.IPv - this.ILoad - this.IBat) * timeDiff;
+            //        it appears IPv = ILoad + IBat (no load on battery), load is negative!!!
+            if (this.RState === 'ON')
+                this.EWMs.directUse += this.UBat * (this.IPv - this.ILoad - this.IBat) * timeDiff;
             else
-                this.E.directUse   += this.UBat * (-this.ILoad) * timeDiff;
-            this.C.AMsAbsorbed += C; // absorbed ampere hours / convMsToH
-            this.E.absorbed    += this.UBat * C; // absorbed energy / convMsToH
-            this.E.loss        += Math.max(0, this.UPv - this.UBat) * C;
+                this.EWMs.directUse += this.UBat * (-this.ILoad) * timeDiff;
+            this.CAMs.absorbed      += C;
+            this.EWMs.absorbed      += this.UBat * C;
+            // IBat > 0 => UPv >= UBat
+            this.EWMs.loss          += Math.max(0, this.UPv - this.UBat) * C;
         } else {
-            this.E.directUse   += this.UBat * this.IPv * timeDiff;
-            this.C.AMsDrawn    += -C; // drawn ampere hours / convMsToH
-            this.E.drawn       += -this.UBat * C; // drawn energy / convMsToH
+            if (this.RState === 'ON')
+                this.EWMs.directUse += this.UBat * this.IPv * timeDiff;
+            this.CAMs.drawn         += -C; // drawn ampere hours / convMsToH
+            this.EWMs.drawn         += -this.UBat * C; // drawn energy / convMsToH
         }
-        // logger.debug(this.E.directUse + ' ' + this.E.absorbed  + ' ' + this.E.drawn +
-        //           ' ' + this.E.loss + ' ' +
-        //           this.C.AMsAbsorbed  + ' ' + this.C.AMsDrawn);
+        // logger.debug(this.EWMs.directUse + ' ' + this.EWMs.absorbed  + ' ' + this.EWMs.drawn +
+        //           ' ' + this.EWMs.loss + ' ' +
+        //           this.CAMs.absorbed  + ' ' + this.CAMs.drawn);
     }
 
     // all getE in Wh
@@ -101,33 +108,33 @@ class EnergyAndChargeMeter {
         let subtract = 0;
         let timeDiff = 0;
         if (time) {
-            subtract = this.Estart.directUse;
+            subtract = this.EWMsStart.directUse;
             timeDiff = time - this.lastTime;
         }
         else timeDiff = new Date() - this.lastTime;
-        return (this.E.directUse - subtract +
+        return (this.EWMs.directUse - subtract +
                 this.UBat * (this.IPv - this.ILoad - Math.max(0, this.IBat)) * timeDiff)*convMsToH;
     }
     getEAbsorbed(time) {
         let subtract = 0;
         let timeDiff = 0;
         if (time) {
-            subtract = this.Estart.absorbed;
+            subtract = this.EWMsStart.absorbed;
             timeDiff = time - this.lastTime;
         }
         else timeDiff = new Date() - this.lastTime;
-        return (this.E.absorbed - subtract + 
+        return (this.EWMs.absorbed - subtract + 
                 this.UBat * Math.max(0, this.IBat) * timeDiff) * convMsToH;
     }
     getEDrawn(time) {
         let subtract = 0;
         let timeDiff = 0;
         if (time) {
-            subtract = this.Estart.drawn;
+            subtract = this.EWMsStart.drawn;
             timeDiff = time - this.lastTime;
         }
         else timeDiff = new Date() - this.lastTime;
-        return (this.E.drawn - subtract -
+        return (this.EWMs.drawn - subtract -
                 this.UBat * Math.min(0, this.IBat) * timeDiff)* convMsToH;
     }
     // convert Energy to Euro in IRL
@@ -139,11 +146,11 @@ class EnergyAndChargeMeter {
         let subtract = 0;
         let timeDiff = 0;
         if (time) {
-            subtract = this.Estart.loss;
+            subtract = this.EWMsStart.loss;
             timeDiff = time - this.lastTime;
         }
         else timeDiff = new Date() - this.lastTime;
-        return (this.E.loss - subtract +
+        return (this.EWMs.loss - subtract +
                 (this.UPv - this.UBat) * Math.min(0, this.IBat) * timeDiff) * convMsToH;
     }
 
@@ -152,38 +159,39 @@ class EnergyAndChargeMeter {
         let subtract = 0;
         let timeDiff = 0;
         if (time) {
-            subtract = this.Cstart.AMsAbsorbed;
+            subtract = this.CAMsStart.absorbed;
             timeDiff = time - this.lastTime;
         }
         else timeDiff = new Date() - this.lastTime;
-        return (this.C.AMsAbsorbed - subtract +
+        return (this.CAMs.absorbed - subtract +
                 Math.max(0, this.IBat) * timeDiff) * convMsToH;
     }
     getCDrawn(time) {
         let subtract = 0;
         let timeDiff = 0;
         if (time) {
-            subtract = this.Cstart.AMsDrawn;
+            subtract = this.CAMsStart.drawn;
             timeDiff = time - this.lastTime;
         }
         else timeDiff = new Date() - this.lastTime;
-        return (this.C.AMsDrawn - subtract -
+        return (this.CAMs.drawn - subtract -
                 Math.min(0, this.IBat) * timeDiff) * convMsToH;
     }
 
     writeData() {
         logger.debug('EnergyAndChargeMeter::writeData');
+        // TODO: use parseFloat when reading as toFixed outputs strings
         let data = {
             time:         new Date(),
-            directUse:    this.getEDirectUse(),
-            absorbed:     this.getEAbsorbed(),
-            drawn:        this.getEDrawn(),
-            loss:         this.getELoss(),
+            directUse:    this.getEDirectUse().toFixed(4),
+            absorbed:     this.getEAbsorbed().toFixed(4),
+            drawn:        this.getEDrawn().toFixed(4),
+            loss:         this.getELoss().toFixed(4),
 
-            AhAbsorbed:   this.getCAbsorbed(),
-            AhDrawn:      this.getCDrawn(),
+            AhAbsorbed:   this.getCAbsorbed().toFixed(4),
+            AhDrawn:      this.getCDrawn().toFixed(4),
 
-            kWhHarvested: this.toEuroInclVAT(this.getEDirectUse() + this.getEDrawn())
+            kWhHarvested: this.toEuroInclVAT(this.getEDirectUse() + this.getEDrawn()).toFixed(2),
         };
         let jData = JSON.stringify(data);
         logger.debug('Writing meter data to file ' + file);
@@ -193,7 +201,7 @@ class EnergyAndChargeMeter {
 
     terminate() {
         logger.debug('EnergyAndChargeMeter::terminate');
-	this.writeData();
+        this.writeData();
     }
 }
 

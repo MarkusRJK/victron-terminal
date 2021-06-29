@@ -78,7 +78,7 @@ class PVInputFromIrradianceML {
 
             this.csv = fs.createWriteStream('/var/log/pv.log', {flags: 'a'});
             // FIXME: addd column pop
-            this.csv.write('start time,DNI,DHI,directUse,absorbed,loss,clouds (' +
+            this.csv.write('start time,\tDNI,\tDHI,\tdirectUse,\tabsorbed,\tloss,\tclouds (' +
                            new Date().toDateString() + ')\n');
 
             PVInputFromIrradianceML.instance = this;
@@ -129,7 +129,6 @@ class PVInputFromIrradianceML {
         logger.trace('PVInputFromIrradianceML::setFlow(.)');
         this.lastU = chargerFlow.getVoltage();
         this.lastI = chargerFlow.getCurrent();
-        this.cumulativeMovingAverage(pvVoltage);
         this.addFlow(time);
 
         // morning before or after sunrise but before sunset
@@ -208,12 +207,12 @@ class PVInputFromIrradianceML {
                 // write data to CSV: time, nominalI, nominalP
                 let t = new Date(this.forecastStartTime).toTimeString().substring(0,8);
 
-                this.csv.write(t + ',' +
-                               convMsToH * this.EDirectNormal * (1.0 - this.pcClouds) + ',' +
-                               convMsToH * this.EDiffuseHorizontal * this.pcClouds + ',' +
-                               this.meter.getEDirectUse() + ',' +
-                               this.meter.getEAbsorbed() + ',' +
-                               this.meter.getELoss() + ',' +
+                this.csv.write(t + ',\t' +
+                               (convMsToH * this.EDirectNormal * (1.0 - this.pcClouds)).toFixed(4) + ',\t' +
+                               (convMsToH * this.EDiffuseHorizontal * this.pcClouds).toFixed(4) + ',\t' +
+                               this.meter.getEDirectUse().toFixed(4) + ',\t' +
+                               this.meter.getEAbsorbed().toFixed(4) + ',\t' +
+                               this.meter.getELoss().toFixed(4) + ',\t' +
                                this.pcClouds + '\n');
 
                 this.copyWeatherData();
@@ -242,23 +241,25 @@ class PVInputFromIrradianceML {
         // write remaining data to CSV
         let t = new Date(this.forecastStartTime).toTimeString().substring(0,8);
 
-        this.csv.write(t + ',' +
-                       convMsToH * this.EDirectNormal * (1.0 - this.pcClouds) + ',' +
-                       convMsToH * this.EDiffuseHorizontal * this.pcClouds + ',' +
-                       this.meter.getEDirectUse() + ',' +
-                       this.meter.getEAbsorbed() + ',' +
-                       this.meter.getELoss() + ',' +
+        this.csv.write(t + ',\t' +
+                       (convMsToH * this.EDirectNormal * (1.0 - this.pcClouds)).toFixed(4) + ',\t' +
+                       (convMsToH * this.EDiffuseHorizontal * this.pcClouds).toFixed(4) + ',\t' +
+                       this.meter.getEDirectUse().toFixed(4) + ',\t' +
+                       this.meter.getEAbsorbed().toFixed(4) + ',\t' +
+                       this.meter.getELoss().toFixed(4) + ',\t' +
                        this.pcClouds + '\n');
 
-        this.csv.write('\nTotals:\n');
-        let now = new Date();
-        this.csv.write(t + ',' +
-                       convMsToH * this.EDirectNormal * (1.0 - this.pcClouds) + ',' +
-                       convMsToH * this.EDiffuseHorizontal * this.pcClouds + ',' +
-                       this.meter.getEDirectUse(now) + ',' +
-                       this.meter.getEAbsorbed(now) + ',' +
-                       this.meter.getELoss(now) + ',' +
-                       this.pcClouds + '\n');
+	// FIXME: incorrect - not giving totals...
+
+        // this.csv.write('\nTotals:\n');
+        // let now = new Date();
+        // this.csv.write(t + ',\t' +
+        //                (convMsToH * this.EDirectNormal * (1.0 - this.pcClouds)).toFixed(4) + ',\t' +
+        //                (convMsToH * this.EDiffuseHorizontal * this.pcClouds).toFixed(4) + ',\t' +
+        //                this.meter.getEDirectUse(now).toFixed(4) + ',\t' +
+        //                this.meter.getEAbsorbed(now).toFixed(4) + ',\t' +
+        //                this.meter.getELoss(now).toFixed(4) + ',\t' +
+        //                this.pcClouds + '\n');
 
         this.csv.write('\nearliest current at ' +
                        new Date(this.earliestTimeOfCurrent));

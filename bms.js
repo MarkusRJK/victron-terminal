@@ -1041,7 +1041,7 @@ class BMS extends VEdeviceSerialAccu {
         const UBat  = this.chargerFlow.getVoltage();
         const IPv   = this.pvFlow.getCurrent();
         const ILoad = this.loadFlow.getCurrent();
-        const IBat  = this.chargerFlow.getCurrent();
+        const IBat  = this.topFlow.getCurrent();
 
         const relayState = this.update().relayState.value; // 'ON' or 'OFF'
         ECMeter.setFlows(UPv, UBat, IPv, ILoad, IBat, relayState, timeStamp);
