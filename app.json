@@ -20,7 +20,8 @@
         "alarmLevel"       : 2,
         "absMinCurrent"    : -150, 
         "absMaxCurrent"    : 45,
-        "note_minVoltage"  : "lead accu: end-of-discharge voltage = 1.75V/cell => 10.5V",
+        "FIXME:": "check that minVoltage in code is mid or topVoltage",
+        "note_minVoltage"  : "lead accu: end-of-discharge minVoltage = 1.75V/cell => 10.5V",
         "minVoltage"       : 11.5,
         "whenCurrentBelow" : 2,
         "note_maxVoltage"  : "lead accu: end-of-charge voltage = 2.42V/cell => 14.52V",
@@ -32,23 +33,24 @@
         "alarmLevel"       : 0,
         "absMinCurrent"    : -15, 
         "absMaxCurrent"    : 40,
-        "note_minVoltage"  : "2 lead accus in series => voltage >= 21V",
+        "note_minVoltage"  : "2 lead accus in series => minVoltage >= 21V",
         "minVoltage"       : 24,
         "whenCurrentBelow" : 2,
+        "FIXME:": "minVoltage when current below must be there for several seconds!",
         "note_maxVoltage"  : "2 lead accus in series => charge voltage can reach 36V",
         "maxVoltage"       : 33,
-        "whenCurrentAbove" : 4
+        "whenCurrentAbove" : 2
     },
     "ChargerProtectionHighPriority" : {
         "alarmLevel"       : 2,
         "absMinCurrent"    : -20, 
         "absMaxCurrent"    : 45,
-        "note_minVoltage"  : "2 lead accus in series => voltage >= 21V",
+        "note_minVoltage"  : "2 lead accus in series => minVoltage >= 21V",
         "minVoltage"       : 23,
         "whenCurrentBelow" : 2,
         "note_maxVoltage"  : "2 lead accus in series => charge voltage can reach 36V",
         "maxVoltage"       : 35,
-        "whenCurrentAbove" : 4
+        "whenCurrentAbove" : 2
     },
     "ChargerLoadProtectionLowPriority" : {
         "alarmLevel"       : 0,
@@ -115,6 +117,11 @@
     },
 
     "discharge": {
-    }
+    },
 
+    "openWeatherAPI": {
+        "key"      : "c02463890b91a002fb8709c1ca04987b",
+        "latitude" : 53.4853,
+        "longitude": -6.152
+    }
 }

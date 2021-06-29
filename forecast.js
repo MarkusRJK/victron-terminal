@@ -1,19 +1,14 @@
-'use strict';
 
 const Math = require('mathjs');
-const request = require('request');
+const request = require('request'); // FIXME: deprecated
 var fs = require('fs');
 const logger = require('log4js').getLogger();
-
-var log_stdout = process.stdout;
-
-let apiKey = 'c02463890b91a002fb8709c1ca04987b';
-let lat=53.4853;
-let lon=-6.152;
+//const MLR = require('ml-regression-multivariate-linear');
+//const mlr = new MLR();
 
 
 
-
+// used in web app
 class SolarAltitude {
 
     constructor() {
@@ -47,52 +42,78 @@ var solarState = new SolarAltitude();
 let weather = null;
 
 // get forecast every hour: 1000 * 60 * 60 = 3600000
-const convMsToH = 1.0 / (1000 * 60 * 60)
+const convMsToH = 1.0 / (1000 * 60 * 60);
 
-class NominalPVInput {
-    constructor() {
-        logger.debug('NominalPVInput::constructor');
-        this.nominalCinAMs = 0;
-        this.nominalPinWMs = 0;
-        this.lastU = null; // last voltage
-        this.lastI = null; // last current
-        this.lastTime = 0;
-        this.sunrise = 0;
-        this.sunset = 0;
-        // get weather reading
-        this.copyWeatherData();
 
-        // setTimeout(function () {
-        //     this.addFlow();
-        // }.bind(this), 60000); // every minute
-        setTimeout(this.addFlow.bind(this), 60000); // every minute
+class PVInputFromIrradianceML {
 
-        this.csv = fs.createWriteStream('/var/log/pv.log', {flags: 'a'});
-        this.csv.write('start time,I,P,tscale,clouds\n');
+    // \param meter is a compulsory metering object
+    constructor(meter) {
+        logger.trace('PVInputFromIrradianceML::constructor');
+
+        if(! PVInputFromIrradianceML.instance){
+            this.lastU = null; // last voltage
+            this.lastI = null; // last current
+            this.lastTime = 0;
+            this.sunrise = 0;
+            this.earliestTimeOfCurrent = 0;
+            this.sunset = 0;
+            this.latestTimeOfCurrent = 0;
+            this.remoteToPCclk = 0;
+            this.meter = meter;
+            this.EDirectNormal      = 0; // needs to be multiplied with (1-clouds)
+            this.EDiffuseHorizontal = 0;     // needs to be multiplied with clouds
+            
+            // determine time difference of PC clock and weather clock
+            this.setRemoteToPCdiffTime();
+            // get weather reading
+            this.copyWeatherData();
+
+            // setTimeout(function () {
+            //     this.addFlow();
+            // }.bind(this), 60000); // every minute
+            // FIXME: setTimeout to calculated next full hour minus 1minute
+            //        and from there setInterval
+            //setInterval(this.addFlow.bind(this), 60000); // every minute
+
+            this.csv = fs.createWriteStream('/var/log/pv.log', {flags: 'a'});
+            // FIXME: addd column pop
+            this.csv.write('start time,DNI,DHI,directUse,absorbed,loss,clouds (' +
+                           new Date().toDateString() + ')\n');
+
+            PVInputFromIrradianceML.instance = this;
+            Object.freeze(PVInputFromIrradianceML);
+        }
+        return PVInputFromIrradianceML.instance;
     }
 
     toPCclk(tInSec) {
-        return tInSec * 1000 + this.remoteToPCclk;
+        logger.trace('PVInputFromIrradianceML::toPCclk');
+        return (tInSec * 1000 + this.remoteToPCclk);
     }
 
     copyWeatherData() {
-        logger.debug('NominalPVInput::copyWeatherData');
+        logger.debug('PVInputFromIrradianceML::copyWeatherData');
         this.requestTime = weather.current.dt * 1000;
-        // determine time difference of PC clock and weather clock
-        this.setRemoteToPCdiffTime();
+
+        // sunrise is the sunrise of the current day (i.e. not the next day)
         this.sunrise           = this.toPCclk(weather.current.sunrise);
+        this.latestTimeOfCurrent = this.sunrise;
+        // sunset is the sunset of the current day
         this.sunset            = this.toPCclk(weather.current.sunset);
+        this.earliestTimeOfCurrent = this.sunset;
         this.forecastStartTime = this.toPCclk(weather.hourly[0].dt);
         this.forecastEndTime   = this.toPCclk(weather.hourly[1].dt);
-        this.pvPenetration     = weather.hourly[0].clouds * 0.01;
+        // FIXME: rename to pcClouds
+        this.pcClouds     = weather.hourly[0].clouds * 0.01;
     }
 
     // add this.remoteToPCclk to any remote time received from weather server
     setRemoteToPCdiffTime() {
-        let weatherClock = this.requestTime;
+        let weatherClock = weather.current.dt * 1000;
         let pcClock = new Date(); // current PC time and date
         this.remoteToPCclk = pcClock - weatherClock;
-        logger.debug('NominalPVInput::setRemoteToPCdiffTime is ' + this.remoteToPCclk);
+        logger.debug('PVInputFromIrradianceML::setRemoteToPCdiffTime is ' + this.remoteToPCclk);
     }
 
     // linear transformation to map the time between sunrise and sunset to [0; PI]
@@ -104,94 +125,178 @@ class NominalPVInput {
         return a * t + b;
     }
 
-    setFlow(flow, time) {
-        logger.trace('NominalPVInput::setFlow(.)');
-        this.lastU = flow.getVoltage();
-        this.lastI = flow.getCurrent();
+    setFlow(chargerFlow, pvVoltage, time) {
+        logger.trace('PVInputFromIrradianceML::setFlow(.)');
+        this.lastU = chargerFlow.getVoltage();
+        this.lastI = chargerFlow.getCurrent();
+        this.cumulativeMovingAverage(pvVoltage);
         this.addFlow(time);
+
+        // morning before or after sunrise but before sunset
+        // 0 < time < this.sunset ==> this.earliestTimeOfCurrent != 0
+        if (time < this.sunset && chargerFlow.getCurrent() > 0)
+            this.earliestTimeOfCurrent = Math.min(time, this.earliestTimeOfCurrent);
+        if (time >= this.sunrise && chargerFlow.getCurrent() <= 0)
+            this.latestTimeOfCurrent = Math.max(time, this.latestTimeOfCurrent);
+    }
+
+    printTimes(time) {
+        logger.debug('time: ' + new Date(time).toTimeString().substring(0,8));
+        logger.debug('fcstart: ' + new Date(this.forecastStartTime).toTimeString().substring(0,8));
+        logger.debug('fcend: ' + new Date(this.forecastEndTime).toTimeString().substring(0,8));
+        logger.debug('wstart: ' + new Date(weather.hourly[0].dt*1000).toTimeString().substring(0,8));
+        logger.debug('wend: ' + new Date(weather.hourly[1].dt*1000).toTimeString().substring(0,8));
+
     }
 
     addFlow(time) {
+        let doExit = false;
         if (!time) time = new Date();
-        logger.trace('NominalPVInput::addFlow(' + time + ')');
+        logger.trace('PVInputFromIrradianceML::addFlow(' + time + ')');
         // wait until the first flow has come in
         if (this.lastU === null || this.lastI === null) {
-            logger.debug('NominalPVInput::addFlow: no flow available');
-            return;
+            logger.debug('PVInputFromIrradianceML::addFlow: no flow available');
+            doExit = true;
         }
         // time dependent processing:
-        if (!this.sunset || !this.sunrise) return;
+        if (!this.sunset || !this.sunrise) {
+            logger.debug('PVInputFromIrradianceML::addFlow: sunrise or sunset not available');
+            doExit = true;
+        }
         if (time < this.sunrise) {
-            logger.debug('NominalPVInput::addFlow: night time');
+            //logger.info('PVInputFromIrradianceML::addFlow: night time');
             // TODO: setTimeout for next updateForecast()
-            return; // do not clock up limited requests to openweathermap
+            doExit = true; // do not clock up limited requests to openweathermap
         }
         // if first call then set time only
         // if hour lapses then start new bucket
         if (this.lastTime === 0) {
             this.lastTime = time;
-            logger.debug('NominalPVInput::addFlow: first time - skip flow');
-            return; // skip this flow
+            logger.debug('PVInputFromIrradianceML::addFlow: first time - skip flow');
+            doExit = true; // skip this flow
         }
-        // time like weather.current.dt is between
-        // hourly[0].dt and hourly[1].dt. If time goes beyond
-        // hourly[1].dt then request a new forecast. Allow 60
-        // seconds for this forecast.
-        if ((time >= this.forecastEndTime - 60000
-             || time > this.sunset) &&
-            this.requestTime !== null) {
-            logger.debug('NominalPVInput::addFlow: requesting forecast for next hour');
-            this.requestTime = null; // mark that a request is on its way
-            updateForecast(); // FIXME: what if updateForecast fails
-        }
-        // scale I to what it would be at noon time (highest sun)
-        let timescale = 1 / Math.sin(this.scaleSunRiseAndSetToPI(time));
-        let nominalI = this.lastI * timescale;
-        // scale I to what it would be if cloud penetration was 100%
-        nominalI = nominalI / this.pvPenetration;
-        let nominalP = this.lastU * nominalI;
+        if (doExit) return;
+
         let timeDiff = time - this.lastTime;
 
-        if (time >= this.forecastEndTime) {
-            logger.debug('NominalPVInput::addFlow: writing data to CSV file');
-            // write data to CSV: time, nominalI, nominalP
-            let t = new Date(this.forecastStartTime).toTimeString();
-            this.csv.write(t + ',' +
-                           (this.nominalCinAMs * convMsToH) + ',' +
-                           (this.nominalPinWMs * convMsToH) + ',' +
-                           timescale + ',' +
-                           this.pvPenetration +
-                           '\n');
-            this.copyWeatherData();
-            this.nominalCinAMs = nominalI * timeDiff;
-            this.nominalPinWMs = nominalP * timeDiff;
+        // time like weather.current.dt is between
+        // hourly[0].dt and hourly[1].dt. If time goes beyond
+        // hourly[1].dt then request a new forecast. 
+        if (this.requestTime !== null) {
+            if (time > this.forecastEndTime + 1000) {
+                logger.debug('PVInputFromIrradianceML::addFlow: requesting forecast for next hour');
+
+                //this.printTimes(time);
+                
+                this.requestTime = null; // mark that a request is on its way
+                module.exports.updateForecast(); // FIXME: what if updateForecast fails
+
+                //this.printTimes(time);
+            }
+            //logger.debug('PVInputFromIrradianceML::addFlow: accumulating 1');
+            let s = Math.sin(this.scaleSunRiseAndSetToPI(time));
+            // estimated energy from the direct normal and diffuse horizontal irradiance
+            this.EDirectNormal      += s * timeDiff; // needs to be multiplied with (1-clouds)
+            this.EDiffuseHorizontal += timeDiff;     // needs to be multiplied with clouds
         }
         else {
-            this.nominalCinAMs += nominalI * timeDiff;
-            this.nominalPinWMs += nominalP * timeDiff;
+            if (time < this.toPCclk(weather.hourly[1].dt)) {
+
+                //this.printTimes(time);
+
+                logger.debug('PVInputFromIrradianceML::addFlow: writing data to CSV file');
+                // write data to CSV: time, nominalI, nominalP
+                let t = new Date(this.forecastStartTime).toTimeString().substring(0,8);
+
+                this.csv.write(t + ',' +
+                               convMsToH * this.EDirectNormal * (1.0 - this.pcClouds) + ',' +
+                               convMsToH * this.EDiffuseHorizontal * this.pcClouds + ',' +
+                               this.meter.getEDirectUse() + ',' +
+                               this.meter.getEAbsorbed() + ',' +
+                               this.meter.getELoss() + ',' +
+                               this.pcClouds + '\n');
+
+                this.copyWeatherData();
+
+                //this.printTimes(time);
+
+                this.meter.setStart();
+                let s = Math.sin(this.scaleSunRiseAndSetToPI(time));
+                // estimated energy from the direct normal and diffuse horizontal irradiance
+                this.EDirectNormal      = s * timeDiff; // needs to be multiplied with (1-clouds)
+                this.EDiffuseHorizontal = timeDiff;     // needs to be multiplied with clouds
+            }
+            else {
+                //logger.debug('PVInputFromIrradianceML::addFlow: accumulating 2');
+                let s = Math.sin(this.scaleSunRiseAndSetToPI(time));
+                // estimated energy from the direct normal and diffuse horizontal irradiance
+                this.EDirectNormal      += s * timeDiff; // needs to be multiplied with (1-clouds)
+                this.EDiffuseHorizontal += timeDiff;     // needs to be multiplied with clouds
+            }           
         }
         this.lastTime = time;
+    }
+
+    terminate() {
+        logger.debug('PVInputFromIrradianceML::terminate');
+        // write remaining data to CSV
+        let t = new Date(this.forecastStartTime).toTimeString().substring(0,8);
+
+        this.csv.write(t + ',' +
+                       convMsToH * this.EDirectNormal * (1.0 - this.pcClouds) + ',' +
+                       convMsToH * this.EDiffuseHorizontal * this.pcClouds + ',' +
+                       this.meter.getEDirectUse() + ',' +
+                       this.meter.getEAbsorbed() + ',' +
+                       this.meter.getELoss() + ',' +
+                       this.pcClouds + '\n');
+
+        this.csv.write('\nTotals:\n');
+        let now = new Date();
+        this.csv.write(t + ',' +
+                       convMsToH * this.EDirectNormal * (1.0 - this.pcClouds) + ',' +
+                       convMsToH * this.EDiffuseHorizontal * this.pcClouds + ',' +
+                       this.meter.getEDirectUse(now) + ',' +
+                       this.meter.getEAbsorbed(now) + ',' +
+                       this.meter.getELoss(now) + ',' +
+                       this.pcClouds + '\n');
+
+        this.csv.write('\nearliest current at ' +
+                       new Date(this.earliestTimeOfCurrent));
+        this.csv.write('\nlatest current at ' +
+                       new Date(this.latestTimeOfCurrent) + '\n');
     }
 }
 
 var pvInput = null;
+var UFapiKey = '';
+var UFlatitude = -1;
+var UFlongitude = -1;
+var UFmeter = null;
 
-function updateForecast() {
-    logger.debug('updateForecast');
+module.exports.updateForecast = function(apiKey, lat, lon, meter) {
+    if (apiKey) UFapiKey = apiKey;
+    if (lat)    UFlatitude = lat;
+    if (lon)    UFlongitude = lon;
+    if (meter)  UFmeter = meter;
     // 24 hours forecast, one array entry starting at each hour
-    let url = `https://api.openweathermap.org/data/2.5/onecall?lat=${lat}&lon=${lon}&exclude=minutely,daily,alerts&units=metric&appid=${apiKey}`
+    let url = `https://api.openweathermap.org/data/2.5/onecall?lat=${UFlatitude}&lon=${UFlongitude}&exclude=minutely,daily,alerts&units=metric&appid=${UFapiKey}`
+    logger.trace('updateForecast: ' + url);
     request(url, function (error, response, body) {
         if(error){
             logger.error('ERROR:', error);
         } else {
-            console.log('body:', body);
+            //logger.debug('body:', body);
             try {       
                 weather = JSON.parse(body);
+                logger.debug('received weather data from ' +
+                             new Date(weather.current.dt * 1000));
+                if (response) logger.debug('status code ' + response.statusCode);
                 solarState.setSunrise(weather.current.sunrise);
                 solarState.setSunset(weather.current.sunset);
                 //weather.hourly.map(h => console.log(new Date(h.dt * 1000).toTimeString().substring(0,8)));
-                if (!pvInput) pvInput = new NominalPVInput();
+                if (!pvInput || !UFmeter) pvInput = new PVInputFromIrradianceML(UFmeter);
                 module.exports.pvInput = pvInput;
+                response
             }
             catch(err) {
                 logger.error("ERROR: could not parse weather; ", err);
@@ -199,9 +304,6 @@ function updateForecast() {
         }
     });
 }
-
-updateForecast();
-//setInterval(updateForecast, 3600000);
 
 
 module.exports.pvInput = pvInput;

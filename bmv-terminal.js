@@ -625,6 +625,7 @@ term.on( 'key' , ( name , matches , data ) => {
 
     if ( name === 'CTRL_C' ) {
         vedirect.stop();
+	vedirect.stopPolling();
         terminate() ;
     }
     name = name.toUpperCase()
@@ -718,5 +719,5 @@ term.on( 'key' , ( name , matches , data ) => {
     }
 } ) ;
 
-readDeviceConfig();
+// FIXME: temporary disabled - readDeviceConfig();
 

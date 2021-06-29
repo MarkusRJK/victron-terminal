@@ -9,8 +9,10 @@ const Alarm = require('./protection.js').Alarm;
 const FlowProtection = require('./protection.js').FlowProtection;
 const ChargerOverheatProtection = require('./protection.js').ChargerOverheatProtection;
 var log4js = require('log4js');
-var solarState = require( './forecast' ).solarState;
+const ECMeter = require( './meter' ).EnergyAndChargeMeter;
 var pvInput = require( './forecast' ).pvInput;
+var forecast = require( './forecast' );
+
 
 
 let mppt = new MPPTclient(0); // poking in intervals done below
@@ -867,7 +869,7 @@ class BMS extends VEdeviceSerialAccu {
     }
 
     startPolling() {
-        setInterval(function () {
+        this.interval = setInterval(function () {
             if (module.exports.BMSInstance.isMaster) mppt.requestData();
             let data = mppt.getData();
 
@@ -887,6 +889,14 @@ class BMS extends VEdeviceSerialAccu {
             bmvdata.MPPTchargingCurrent.newValue    = data.chargingCurrent;
         }.bind(mppt), this.tracerInterval);
     }
+
+    stopPolling() {
+        logger.debug("BMS::stopPolling");
+        clearInterval(this.interval);
+        if (pvInput) pvInput.terminate();
+        ECMeter.terminate(); // write out meter data
+    }
+
 
     hideBMVdisplayParams() {
         // hide 'useless' parameters in BMV display
@@ -939,6 +949,15 @@ class BMS extends VEdeviceSerialAccu {
             if ('isMaster' in this.appConfig.Tracer)
                 this.isMaster = this.appConfig.Tracer.isMaster;
         }
+
+        if ('openWeatherAPI' in this.appConfig) {
+            let apiKey = this.appConfig.openWeatherAPI.key;
+            let lat    = this.appConfig.openWeatherAPI.latitude;
+            let lon    = this.appConfig.openWeatherAPI.longitude;
+
+            forecast.updateForecast(apiKey, lat, lon, ECMeter);
+        }
+        else throw 'OpenWeather configuration missing';
     }
 
     protectFlows(time) {
@@ -1017,8 +1036,20 @@ class BMS extends VEdeviceSerialAccu {
         logger.trace('BMS::processData');
         this.setFlows(changedMap, timeStamp);
         this.protectFlows(timeStamp);
+
+        const UPv   = this.pvFlow.getVoltage();
+        const UBat  = this.chargerFlow.getVoltage();
+        const IPv   = this.pvFlow.getCurrent();
+        const ILoad = this.loadFlow.getCurrent();
+        const IBat  = this.chargerFlow.getCurrent();
+
+        const relayState = this.update().relayState.value; // 'ON' or 'OFF'
+        ECMeter.setFlows(UPv, UBat, IPv, ILoad, IBat, relayState, timeStamp);
+
         //if (pvInput) pvInput.addFlow(this.pvFlow, timeStamp);
-        if (pvInput) pvInput.setFlow(this.chargerFlow, timeStamp);
+        if (pvInput) pvInput.setFlow(this.chargerFlow,
+                                     this.pvFlow.getVoltage(),
+                                     timeStamp);
         else {
             logger.warn('BMS::processData - pvInput not yet available');
             pvInput = require( './forecast' ).pvInput;
