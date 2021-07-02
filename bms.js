@@ -65,47 +65,36 @@ class Flow {
     constructor() {
         this.actualVoltage = 0;
         this.actualCurrent = 0;
-        this.newCurrent    = null;
-        this.newVoltage    = null;
-    }
-
-    update() {
-        // both flow values received
-        if (this.newCurrent != null && this.newVoltage != null) {
-            this.actualCurrent = this.newCurrent;
-            this.actualVoltage = this.newVoltage;
-            this.newCurrent    = null;
-            this.newVoltage    = null;
-        }
     }
 
     // \param current in a scale such that current * scaleCurrent results in ampers
     //        rather than milli ampers or so
     setCurrent(current) {
-        let I = parseFloat(current);
-        //console.log("I = " + I);
+        let I = (typeof current === 'string' ? parseFloat(current) : current);
         if (! isNaN(I)) {
-            this.newCurrent = I;
+            //logger.debug('setCurrent: ' + I);
+            this.actualCurrent = I;
         }
-        this.update();
     }
 
     getCurrent() {
+        //logger.debug('getCurrent: ' + this.actualCurrent);
         return this.actualCurrent;
     }
 
     // \param voltage in a scale such that voltage * scaleVoltage results in volts
     //        rather than milli volts or so
     setVoltage(voltage) {
-        let U = parseFloat(voltage);
+        let U = (typeof voltage === 'string' ? parseFloat(voltage) : voltage);
         //console.log("U = " + U);
         if (! isNaN(U)) {
-            this.newVoltage = U;
+            //logger.debug('setVoltage: ' + U);
+            this.actualVoltage = U;
         }
-        this.update();
     }
 
     getVoltage() {
+        //logger.debug('getVoltage: ' + this.actualVoltage);
         return this.actualVoltage;
     }
 
@@ -1037,13 +1026,14 @@ class BMS extends VEdeviceSerialAccu {
         this.setFlows(changedMap, timeStamp);
         this.protectFlows(timeStamp);
 
-        const UPv   = this.pvFlow.getVoltage();
-        const UBat  = this.chargerFlow.getVoltage();
-        const IPv   = this.pvFlow.getCurrent();
-        const ILoad = this.loadFlow.getCurrent();
-        const IBat  = this.topFlow.getCurrent();
+        let UPv   = this.pvFlow.getVoltage();
+        let UBat  = this.chargerFlow.getVoltage();
+        let IPv   = this.pvFlow.getCurrent();
+        let ILoad = this.loadFlow.getCurrent();
+        let IBat  = this.topFlow.getCurrent() * 2;
+        //logger.debug('BMS::processData - IPv = ' + IPv + ' IBat = ' + IBat);
 
-        const relayState = this.update().relayState.value; // 'ON' or 'OFF'
+        let relayState = this.update().relayState.value; // 'ON' or 'OFF'
         ECMeter.setFlows(UPv, UBat, IPv, ILoad, IBat, relayState, timeStamp);
 
         //if (pvInput) pvInput.addFlow(this.pvFlow, timeStamp);

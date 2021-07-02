@@ -13,12 +13,13 @@ class EnergyAndChargeMeter {
     constructor() {
         logger.trace('EnergyAndChargeMeter::constructor');
         this.resetAccumulations();
+        this.readData();
         this.setFlows(0, 0, 0, 0, 0, 'OFF', 0);
         this.setStart();
     }
 
     resetAccumulations() {
-        logger.debug('EnergyAndChargeMeter::resetAccumulations'); // FIXME: revert to trace
+        logger.trace('EnergyAndChargeMeter::resetAccumulations');
         // E = Energy: is in Watt milliseconds - needs to be converted to Wh
         this.EWMs = {
             directUse: 0,
@@ -52,7 +53,8 @@ class EnergyAndChargeMeter {
     }
 
     setFlows(UPv, UBat, IPv, ILoad, IBat, relayState, time) {
-        logger.trace('EnergyAndChargeMeter::setFlows');
+        logger.trace('EnergyAndChargeMeter::setFlows ' +
+                    UPv + ' ' + UBat + ' ' + IPv + ' ' + ILoad + ' ' + IBat + ' ' + relayState);
         this.UPv    = UPv;
         this.UBat   = UBat;
         this.IPv    = IPv;
@@ -69,31 +71,47 @@ class EnergyAndChargeMeter {
         logger.trace('EnergyAndChargeMeter::accumulate');
         if (!this.lastTime) {
             this.lastTime = time;
-            logger.debug('EnergyAndChargeMeter::accumulate: skip first time');
+            logger.info('EnergyAndChargeMeter::accumulate: skip first time');
             return;
         }
         let timeDiff = time - this.lastTime;
         
         // E = Energy
         let C = this.IBat * timeDiff;
-        // IBat > 0 ==> laden, IPv >= 0, all U* >= 0, ILoad <= 0
         // logger.debug(this.IBat + ' ' + this.UBat  + ' ' + this.IPv +
         //           ' ' + this.UPv + ' ' +
         //           this.ILoad  + ' ' + timeDiff);
+
+        // NOTE: charging and discharging is not trivial:
+        // If relay is off the only discharge can happend via the load connected of the MPPT.
+        // 
+
+        // FIXME: is load current part of pv or not?
+        // Late evening time: Relay OFF
+        // PV voltage: 15V, MPPT charge current: 0A
+        // MPPT load current: 4A
+        // Battery current: -4A
+        
+
+        
+        // IBat    RState  directUse               absorbed  drawn      loss
+        // <= 0 && off:    IPv                     0         IBat       0
+        // <= 0 && on:     IPv                     0         IBat       0
+        // > 0  && off:    min(IPv,ILoad)          IBat      0          (UPv-UBat)*IBat
+        // > 0  && on:     IPv-IBat(+ILoad)        IBat      0          (UPv-UBat)*IBat
         if (this.IBat > 0) { // charging
             // FIXME: for correct metering determine whether ILoad is contained in IPv?
             //        it appears IPv = ILoad + IBat (no load on battery), load is negative!!!
             if (this.RState === 'ON')
                 this.EWMs.directUse += this.UBat * (this.IPv - this.ILoad - this.IBat) * timeDiff;
             else
-                this.EWMs.directUse += this.UBat * (-this.ILoad) * timeDiff;
+                this.EWMs.directUse += this.UBat * Math.min(this.IPv,-this.ILoad) * timeDiff;
             this.CAMs.absorbed      += C;
             this.EWMs.absorbed      += this.UBat * C;
             // IBat > 0 => UPv >= UBat
             this.EWMs.loss          += Math.max(0, this.UPv - this.UBat) * C;
         } else {
-            if (this.RState === 'ON')
-                this.EWMs.directUse += this.UBat * this.IPv * timeDiff;
+            this.EWMs.directUse     += this.UBat * this.IPv * timeDiff;
             this.CAMs.drawn         += -C; // drawn ampere hours / convMsToH
             this.EWMs.drawn         += -this.UBat * C; // drawn energy / convMsToH
         }
@@ -112,8 +130,17 @@ class EnergyAndChargeMeter {
             timeDiff = time - this.lastTime;
         }
         else timeDiff = new Date() - this.lastTime;
-        return (this.EWMs.directUse - subtract +
-                this.UBat * (this.IPv - this.ILoad - Math.max(0, this.IBat)) * timeDiff)*convMsToH;
+
+        let directUseLastMinutes = 0;
+        if (this.IBat > 0) { // charging
+            if (this.RState === 'ON')
+                directUseLastMinutes = this.UBat * (this.IPv - this.ILoad - this.IBat) * timeDiff;
+            else
+                directUseLastMinutes = this.UBat * Math.min(this.IPv,-this.ILoad) * timeDiff;
+        } else {
+            directUseLastMinutes = this.UBat * this.IPv * timeDiff;
+        }
+        return (this.EWMs.directUse - subtract + directUseLastMinutes) * convMsToH;
     }
     getEAbsorbed(time) {
         let subtract = 0;
@@ -123,8 +150,9 @@ class EnergyAndChargeMeter {
             timeDiff = time - this.lastTime;
         }
         else timeDiff = new Date() - this.lastTime;
-        return (this.EWMs.absorbed - subtract + 
-                this.UBat * Math.max(0, this.IBat) * timeDiff) * convMsToH;
+        let absorbedLastMinutes = 0;
+        if (this.IBat > 0) absorbedLastMinutes = this.UBat * this.IBat * timeDiff;
+        return (this.EWMs.absorbed - subtract + absorbedLastMinutes) * convMsToH;
     }
     getEDrawn(time) {
         let subtract = 0;
@@ -134,8 +162,9 @@ class EnergyAndChargeMeter {
             timeDiff = time - this.lastTime;
         }
         else timeDiff = new Date() - this.lastTime;
-        return (this.EWMs.drawn - subtract -
-                this.UBat * Math.min(0, this.IBat) * timeDiff)* convMsToH;
+        let drawnLastMinutes = 0;
+        if (this.IBat < 0) drawnLastMinutes = -this.UBat * this.IBat * timeDiff;
+        return (this.EWMs.drawn - subtract + drawnLastMinutes) * convMsToH;
     }
     // convert Energy to Euro in IRL
     toEuroInclVAT(energyInWh) {
@@ -150,10 +179,10 @@ class EnergyAndChargeMeter {
             timeDiff = time - this.lastTime;
         }
         else timeDiff = new Date() - this.lastTime;
-        return (this.EWMs.loss - subtract +
-                (this.UPv - this.UBat) * Math.min(0, this.IBat) * timeDiff) * convMsToH;
+        let lossLastMinutes = 0;
+        if (this.IBat > 0) lossLastMinutes = Math.max(0, this.UPv - this.UBat) * this.IBat * timeDiff;
+        return (this.EWMs.loss - subtract + lossLastMinutes) * convMsToH;
     }
-
     // all getC in Ah
     getCAbsorbed(time) {
         let subtract = 0;
@@ -163,8 +192,9 @@ class EnergyAndChargeMeter {
             timeDiff = time - this.lastTime;
         }
         else timeDiff = new Date() - this.lastTime;
-        return (this.CAMs.absorbed - subtract +
-                Math.max(0, this.IBat) * timeDiff) * convMsToH;
+        let absorbedLastMinutes = 0;
+        if (this.IBat > 0) absorbedLastMinutes = this.IBat * timeDiff;
+        return (this.CAMs.absorbed - subtract + absorbedLastMinutes) * convMsToH;
     }
     getCDrawn(time) {
         let subtract = 0;
@@ -174,8 +204,9 @@ class EnergyAndChargeMeter {
             timeDiff = time - this.lastTime;
         }
         else timeDiff = new Date() - this.lastTime;
-        return (this.CAMs.drawn - subtract -
-                Math.min(0, this.IBat) * timeDiff) * convMsToH;
+        let drawnLastMinutes = 0;
+        if (this.IBat < 0) drawnLastMinutes =  -this.IBat * timeDiff; 
+        return (this.CAMs.drawn - subtract + drawnLastMinutes) * convMsToH;
     }
 
     writeData() {
@@ -197,6 +228,27 @@ class EnergyAndChargeMeter {
         logger.debug('Writing meter data to file ' + file);
         let meterFile = fs.createWriteStream(file, {flags: 'w'});
         meterFile.write(jData);
+    }
+
+    readData() {
+        logger.debug('EnergyAndChargeMeter::readData');
+
+        try {
+            let data = fs.readFileSync(file, 'utf8');
+            let meterObj = JSON.parse(data);
+
+            this.EWMs.directUse = meterObj.directUse  / convMsToH;
+            this.EWMs.absorbed  = meterObj.absorbed   / convMsToH;
+            this.EWMs.drawn     = meterObj.drawn      / convMsToH;
+            this.EWMs.loss      = meterObj.loss       / convMsToH;
+
+            this.CAMs.absorbed  = meterObj.AhAbsorbed / convMsToH;
+            this.CAMs.drawn     = meterObj.AhDrawn    / convMsToH;
+            logger.info('Meter data retrieved from ' + file);
+        }
+        catch (err) {
+            logger.error(`cannot read: ${file} (${err.code === 'ENOENT' ? 'does not exist' : 'is not readable'})`);
+        }
     }
 
     terminate() {

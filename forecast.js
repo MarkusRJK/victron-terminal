@@ -78,7 +78,7 @@ class PVInputFromIrradianceML {
 
             this.csv = fs.createWriteStream('/var/log/pv.log', {flags: 'a'});
             // FIXME: addd column pop
-            this.csv.write('start time,\tDNI,\tDHI,\tdirectUse,\tabsorbed,\tloss,\tclouds (' +
+            this.csv.write('start time,\tDNI,\tDHI,\tdirectUse,\tabsorb.,\tloss,\tclouds (' +
                            new Date().toDateString() + ')\n');
 
             PVInputFromIrradianceML.instance = this;
