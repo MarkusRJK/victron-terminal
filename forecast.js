@@ -63,6 +63,7 @@ class PVInputFromIrradianceML {
             this.meter = meter;
             this.EDirectNormal      = 0; // needs to be multiplied with (1-clouds)
             this.EDiffuseHorizontal = 0;     // needs to be multiplied with clouds
+            this.lastHour = this.meter.setStart();
             
             // determine time difference of PC clock and weather clock
             this.setRemoteToPCdiffTime();
@@ -85,6 +86,21 @@ class PVInputFromIrradianceML {
             Object.freeze(PVInputFromIrradianceML);
         }
         return PVInputFromIrradianceML.instance;
+    }
+
+    // FIXME: better name 
+    earliestCurrent() {
+        // FIXME: earliest and latestTimeOfCurrent need better processing (lookback over
+        //        10 days or so) until then use sunrise and sunset
+        //        ALSO persistence with readback must be implemented!!!
+        //return this.earliestTimeOfCurrent;
+        return this.sunrise;
+    }
+
+    latestCurrent() {
+        // FIXME: see above
+        //return this.latestTimeOfCurrent;
+        return this.sunset;
     }
 
     toPCclk(tInSec) {
@@ -210,16 +226,16 @@ class PVInputFromIrradianceML {
                 this.csv.write(t + ',\t' +
                                (convMsToH * this.EDirectNormal * (1.0 - this.pcClouds)).toFixed(4) + ',\t' +
                                (convMsToH * this.EDiffuseHorizontal * this.pcClouds).toFixed(4) + ',\t' +
-                               this.meter.getEDirectUse().toFixed(4) + ',\t' +
-                               this.meter.getEAbsorbed().toFixed(4) + ',\t' +
-                               this.meter.getELoss().toFixed(4) + ',\t' +
+                               this.meter.getEDirectUse(this.lastHour).toFixed(4) + ',\t' +
+                               this.meter.getEAbsorbed(this.lastHour).toFixed(4) + ',\t' +
+                               this.meter.getELoss(this.lastHour).toFixed(4) + ',\t' +
                                this.pcClouds + '\n');
 
                 this.copyWeatherData();
 
                 //this.printTimes(time);
 
-                this.meter.setStart();
+                this.lastHour = this.meter.setStart(this.lastHour);
                 let s = Math.sin(this.scaleSunRiseAndSetToPI(time));
                 // estimated energy from the direct normal and diffuse horizontal irradiance
                 this.EDirectNormal      = s * timeDiff; // needs to be multiplied with (1-clouds)
@@ -297,7 +313,6 @@ module.exports.updateForecast = function(apiKey, lat, lon, meter) {
                 //weather.hourly.map(h => console.log(new Date(h.dt * 1000).toTimeString().substring(0,8)));
                 if (!pvInput || !UFmeter) pvInput = new PVInputFromIrradianceML(UFmeter);
                 module.exports.pvInput = pvInput;
-                response
             }
             catch(err) {
                 logger.error("ERROR: could not parse weather; ", err);

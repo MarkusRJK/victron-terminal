@@ -982,20 +982,28 @@ class BMS extends VEdeviceSerialAccu {
 
     setFlows(changedMap, timeStamp) {
         logger.trace('BMS::setFlows');
+        // FIXME: average equivalent currents and voltages!!
         if (changedMap.has('midVoltage')) {
             this.bottomFlow.setVoltage(changedMap.get('midVoltage').newValue);
         }
         if (changedMap.has('topVoltage')) {
             this.topFlow.setVoltage(changedMap.get('topVoltage').newValue);
         }
-        if (changedMap.has('upperVoltage') && changedMap.has('MPPTbatteryVoltage')) {
-            // TODO: average, equalize of somehow make them equal as they should be
-            //       despite device variances
+        let batteryVoltage = -1;
+        if (changedMap.has('upperVoltage')) {
+            batteryVoltage = changedMap.get('upperVoltage').newValue;
         }
         if (changedMap.has('MPPTbatteryVoltage')) {
-            let v = changedMap.get('MPPTbatteryVoltage').newValue;
-            this.chargerFlow.setVoltage(v);
-            this.loadFlow.setVoltage(v);
+            // upperVoltage and MPPTbatteryVoltage are the same from different devices
+            if (batteryVoltage !== -1) // average
+                batteryVoltage = 0.5 * (changedMap.get('MPPTbatteryVoltage').newValue +
+                                        batteryVoltage);
+            else
+                batteryVoltage = changedMap.get('MPPTbatteryVoltage').newValue;
+        }
+        if (batteryVoltage !== -1) {
+            this.chargerFlow.setVoltage(batteryVoltage);
+            this.loadFlow.setVoltage(batteryVoltage);
         }
         if (changedMap.has('MPPTpvVoltage')) {
             this.pvFlow.setVoltage(changedMap.get('MPPTpvVoltage').newValue);
@@ -1023,8 +1031,19 @@ class BMS extends VEdeviceSerialAccu {
 
     processData(changedMap, timeStamp) {
         logger.trace('BMS::processData');
-        this.setFlows(changedMap, timeStamp);
-        this.protectFlows(timeStamp);
+        // FIXME: try catch to determine "Assignment to const variable"
+        // try {
+             this.setFlows(changedMap, timeStamp);
+        // }
+        // catch(err) {
+        //     logger.error(err);
+        // }
+        // try {
+             this.protectFlows(timeStamp);
+        // }
+        // catch(err) {
+        //     logger.error(err);
+        // }
 
         let UPv   = this.pvFlow.getVoltage();
         let UBat  = this.chargerFlow.getVoltage();
@@ -1034,16 +1053,26 @@ class BMS extends VEdeviceSerialAccu {
         //logger.debug('BMS::processData - IPv = ' + IPv + ' IBat = ' + IBat);
 
         let relayState = this.update().relayState.value; // 'ON' or 'OFF'
-        ECMeter.setFlows(UPv, UBat, IPv, ILoad, IBat, relayState, timeStamp);
+        // try {
+             ECMeter.setFlows(UPv, UBat, IPv, ILoad, IBat, relayState, timeStamp);
+        // }
+        // catch(err) {
+        //     logger.error(err);
+        // }
 
         //if (pvInput) pvInput.addFlow(this.pvFlow, timeStamp);
-        if (pvInput) pvInput.setFlow(this.chargerFlow,
-                                     this.pvFlow.getVoltage(),
-                                     timeStamp);
-        else {
-            logger.warn('BMS::processData - pvInput not yet available');
-            pvInput = require( './forecast' ).pvInput;
-        }
+        // try {
+            if (pvInput) pvInput.setFlow(this.chargerFlow,
+                                         this.pvFlow.getVoltage(),
+                                         timeStamp);
+            else {
+                logger.warn('BMS::processData - pvInput not yet available');
+                pvInput = require( './forecast' ).pvInput;
+            }
+        // }
+        // catch(err) {
+        //     logger.error(err);
+        // }
     }
 
     setAccuChainVoltage(newVoltage, oldVoltage, timeStamp, key) {

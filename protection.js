@@ -1,5 +1,6 @@
 var log4js = require('log4js');
 const Math = require('mathjs');
+var pvInput = require( './forecast' ).pvInput;
 
 const logger = log4js.getLogger('silent');
 
@@ -99,12 +100,20 @@ class Alarm {
     
     raise(id, alevel, failureText, actionText, eventTime) {
         logger.trace('Alarm::raise(' + id + ', ' + alevel + ')');
-        if (! eventTime) eventTime = new Date();
+        let now = new Date();
+        if (! eventTime) eventTime = now;
 
         let activeUnacknAlarms = this.alarmHistory.filter((a) => (a.isActive && !a.isAckn));
+        // if unacknowledged alarms of same id exist then return
         if (activeUnacknAlarms.some((a) => (a.id === id))) {
+            logger.info('Alarm ' + id + ' already entered');
+            return; // already entered
+        }
+        const fiveMinInMs = 300000; // = 5 * 60 * 1000
+        // if any alarm with same id has been recent (within the last 5 min then return
+        if (this.alarmHistory.some((a) => (a.id === id && now - a.time <= fiveMinInMs))) {
             // FIXME: also consider time - if two alarms too close, ignore second
-            logger.debug('Alarm already entered');
+            logger.info('Alarm ' + id + ' entered within last 5 min');
             return; // already entered
         }
         let alarm = { time     : eventTime,
@@ -173,22 +182,54 @@ class FlowProtection {
         this.config = config;
         this.alarm  = alarm;
         this.actor  = actor;
+        this.sunsetTimer = null;
     }
 
+    removeLoad() {
+        logger.debug("FlowProtection::removeLoad"); // FIXME: revert to trace
+        clearTimeout(this.sunsetTimer);
+        this.sunsetTimer = null;
+        this.actor.setRelay(0);
+    }
+
+    switchLoad() {
+        logger.debug("FlowProtection::switchLoad"); // FIXME: revert to trace
+        this.actor.setRelay(1);
+
+        let lastCurrentTime = 0;
+        if (pvInput)
+            lastCurrentTime = pvInput.latestCurrent()
+        else
+            pvInput = require( './forecast' ).pvInput;
+
+        const now = new Date();
+        //console.log("sunset is in " + solarState.getSunset());
+        // approx 2 hours before sunset or before the current into 
+        // the battery becomes 0
+        const twoHoursTwenteeInMS = 8400000; // (2 * 60 + 20) * 60 * 1000;
+        const timeTillNullChargeInMS = lastCurrentTime - now.getTime()
+              - twoHoursTwenteeInMS;
+        // FIXME: a timer will "get lost" if the server is restarted while 
+        //        switched on. Better to use protection class and feed in sunset
+        //        among parameters current, voltages, soc...
+        // FIXME: also the timer seems not to work if set more than 24 hours in advance
+        this.sunsetTimer = setTimeout(this.removeLoad.bind(this), timeTillNullChargeInMS);
+    }
+    
     setFlow(flow) {
         if (! flow) return; // on null and undefined return
         let I = flow.getCurrent();
         let U = flow.getVoltage();
         if (U === 0) return; // there is no battery voltage of 0
-        let Istr = String(I) + "A";
-        let Ustr = String(U) + "V";
+        let Istr = I.toFixed(2) + "A";
+        let Ustr = U.toFixed(2) + "V";
 
         if (I <= this.config.absMinCurrent) {
             this.alarm.raise(this.id + 0, this.config.alarmLevel,
                              this.name + ": too much load " + Istr,
                              "Removing load from battery");
             // FIXME: to be integer put action text only if alarmLevel === 2
-            if (this.config.alarmLevel >= 1) this.actor.setRelay(0);
+            if (this.config.alarmLevel >= 1) this.removeLoad();
         }
         else {
             this.alarm.clear(this.id + 0, true); // FIXME: Hysteresis needed
@@ -198,7 +239,7 @@ class FlowProtection {
             this.alarm.raise(this.id + 1, this.config.alarmLevel,
                              this.name + ": high charge current " + Istr,
                              "Switching load on battery");
-            if (this.config.alarmLevel >= 1) this.actor.setRelay(1);
+            if (this.config.alarmLevel >= 1) this.switchLoad();
         }
         else this.alarm.clear(this.id + 1, true);
 
@@ -206,7 +247,7 @@ class FlowProtection {
             this.alarm.raise(this.id + 2, this.config.alarmLevel,
                              this.name + ": battery capacity too low; voltage drop to " + Ustr + " for small current " + Istr,
                              "Removing load from battery");
-            if (this.config.alarmLevel >= 1) this.actor.setRelay(0);
+            if (this.config.alarmLevel >= 1) this.removeLoad();
         }
         else this.alarm.clear(this.id + 2, true);
 
@@ -214,7 +255,7 @@ class FlowProtection {
             this.alarm.raise(this.id + 3, this.config.alarmLevel,
                              this.name + ": battery capacity too high; voltage " + Ustr + " and charging at " + Istr,
                              "Switching load on battery");
-            if (this.config.alarmLevel >= 1) this.actor.setRelay(1);
+            if (this.config.alarmLevel >= 1) this.switchLoad();
         }
         else this.alarm.clear(this.id + 3, true);
     }
@@ -276,7 +317,7 @@ class ChargerOverheatProtection {
             // it has to be done manually by pulling all fuses to fully disconnect
             // the charger.
             // It is unclear whether switching on load would help.
-            //FIXME not good: if (this.config.alarmLevel === 2) this.actor.setRelay(1);
+            //FIXME not good: if (this.config.alarmLevel === 2) this.switchLoad();
         }
         else this.alarm.clear(this.id + 4, true);
     }
