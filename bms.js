@@ -883,6 +883,7 @@ class BMS extends VEdeviceSerialAccu {
         logger.debug("BMS::stopPolling");
         clearInterval(this.interval);
         if (pvInput) pvInput.terminate();
+        this.alarms.terminate();
         ECMeter.terminate(); // write out meter data
     }
 

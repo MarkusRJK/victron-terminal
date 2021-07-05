@@ -304,6 +304,7 @@ module.exports.updateForecast = function(apiKey, lat, lon, meter) {
         } else {
             //logger.debug('body:', body);
             try {       
+                // if the parse fails, weather will remain with the old data
                 weather = JSON.parse(body);
                 logger.debug('received weather data from ' +
                              new Date(weather.current.dt * 1000));

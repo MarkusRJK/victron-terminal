@@ -1,6 +1,9 @@
 var log4js = require('log4js');
 const Math = require('mathjs');
 var pvInput = require( './forecast' ).pvInput;
+var fs = require('fs');
+
+const file = __dirname + '/alarms.json';
 
 const logger = log4js.getLogger('silent');
 
@@ -22,6 +25,7 @@ class Alarm {
         logger.trace('Alarm::constructor');
         if(! Alarm.instance){
             this.alarmHistory = [];
+            this.readAlarms();
             this.actionLevel = 1;
             if (historyLength)
                 this.historyLength = 20; // default
@@ -48,8 +52,29 @@ class Alarm {
         this.alarmHistory = filteredHistory;
     }
 
-    persistJSON() {
-        return this.alarmHistory;
+    writeAlarms() {
+        logger.trace('EnergyAndChargeMeter::writeAlarms');
+        let jData = JSON.stringify(this.alarmHistory);
+        logger.info('Writing alarm file ' + file);
+        let alarmFile = fs.createWriteStream(file, {flags: 'w'});
+        alarmFile.write(jData);
+    }
+
+    readAlarms() {
+        logger.trace('EnergyAndChargeMeter::readAlarms');
+
+        try {
+            let data = fs.readFileSync(file, 'utf8');
+            this.alarmHistory = JSON.parse(data);
+            logger.info('Alarms retrieved from ' + file);
+        }
+        catch (err) {
+            logger.error(`cannot read: ${file} (${err.code === 'ENOENT' ? 'does not exist' : 'is not readable'})`);
+        }
+    }
+
+    terminate() {
+        this.writeAlarms();
     }
 
     formatAlarm(a, separator) {
