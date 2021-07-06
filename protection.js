@@ -5,7 +5,8 @@ var fs = require('fs');
 
 const file = __dirname + '/alarms.json';
 
-const logger = log4js.getLogger('silent');
+//const logger = log4js.getLogger('silent');
+const logger = log4js.getLogger();
 
 const minutesToMS = 60 * 1000;
 
@@ -122,7 +123,12 @@ class Alarm {
         if (this.alarmHistory.length) return this.alarmHistory[0];
         else return null;
     }
-    
+
+    // TODO: higher level alarms of same ID deactivate previous lower prio alarms
+    // TODO: an alarm condition has to be present for several seconds/minutes before an action
+    //       is triggered
+    // \return 1 if alarm was raised, otherwise 0 (if alarm was previously raised or within
+    //           last 5 min
     raise(id, alevel, failureText, actionText, eventTime) {
         logger.trace('Alarm::raise(' + id + ', ' + alevel + ')');
         let now = new Date();
@@ -131,15 +137,15 @@ class Alarm {
         let activeUnacknAlarms = this.alarmHistory.filter((a) => (a.isActive && !a.isAckn));
         // if unacknowledged alarms of same id exist then return
         if (activeUnacknAlarms.some((a) => (a.id === id))) {
-            logger.info('Alarm ' + id + ' already entered');
-            return; // already entered
+            //logger.info('Alarm ' + id + ' already entered');
+            return 0; // already entered
         }
         const fiveMinInMs = 300000; // = 5 * 60 * 1000
         // if any alarm with same id has been recent (within the last 5 min then return
         if (this.alarmHistory.some((a) => (a.id === id && now - a.time <= fiveMinInMs))) {
             // FIXME: also consider time - if two alarms too close, ignore second
             logger.info('Alarm ' + id + ' entered within last 5 min');
-            return; // already entered
+            return 0; // already entered
         }
         let alarm = { time     : eventTime,
                       id       : id,
@@ -154,6 +160,7 @@ class Alarm {
         this.reduce();
         // log ALARMs as fatal so they are always in the log
         logger.fatal("ALARM: " + JSON.stringify(alarm));
+        return 1;
     }
 
     acknowledge(id) {
@@ -196,9 +203,54 @@ class Alarm {
 
 
 
+// FIXME: replace by controlled + monitored switcher
+class Switcher {
+
+    constructor(actor) {
+        this.actor  = actor;
+        this.sunsetTimer = null;
+    }
+
+    removeLoad() {
+        logger.debug("Switcher::removeLoad"); // FIXME: revert to trace
+        clearTimeout(this.sunsetTimer);
+        this.sunsetTimer = null;
+        this.actor.setRelay(0);
+    }
+
+
+    // FIXME: it appears that two subsequent calls of switchload result in relay ON_OFF_ON behaviour
+    switchLoad() {
+        logger.debug("FlowProtection::switchLoad"); // FIXME: revert to trace
+        this.actor.setRelay(1);
+
+        // let lastCurrentTime = 0;
+        // if (!pvInput) pvInput = require( './forecast' ).pvInput;
+
+        // lastCurrentTime = pvInput.latestCurrent();
+        // logger.debug('lastcurrenttime: ' + new Date(lastCurrentTime).toTimeString());
+
+        // const now = new Date();
+        // //console.log("sunset is in " + solarState.getSunset());
+        // // approx 2 hours before sunset or before the current into 
+        // // the battery becomes 0
+        // // FIXME: twoHousrTwentee can be removed once lastcurrenttime is properly calculated
+        // //        and working and the average load with relay on is known
+        // const twoHoursTwenteeInMS = 8400000; // (2 * 60 + 20) * 60 * 1000;
+        // const timeTillNullChargeInMS = lastCurrentTime - now.getTime()
+        //       - twoHoursTwenteeInMS;
+        // logger.debug('timeTillNullChargeInMS: ' + new Date(timeTillNullChargeInMS).toTimeString());
+        // // FIXME: a timer will "get lost" if the server is restarted while 
+        // //        switched on. Better to use protection class and feed in sunset
+        // //        among parameters current, voltages, soc...
+        // // FIXME: also the timer seems not to work if set more than 24 hours in advance
+        // this.sunsetTimer = setTimeout(this.removeLoad.bind(this), timeTillNullChargeInMS);
+    }
+}
+
 
 // consumes the flow and checks for violation of safe conditions
-class FlowProtection {
+class FlowProtection { // shall extends Switcher
     // \param config file in JSON containing Alarms and Protection settings
     // \param actor is the victron control
     constructor(id, name, config, alarm, actor) {
@@ -217,23 +269,28 @@ class FlowProtection {
         this.actor.setRelay(0);
     }
 
+
+    // FIXME: it appears that two subsequent calls of switchload result in relay ON_OFF_ON behaviour
     switchLoad() {
         logger.debug("FlowProtection::switchLoad"); // FIXME: revert to trace
         this.actor.setRelay(1);
 
         let lastCurrentTime = 0;
-        if (pvInput)
-            lastCurrentTime = pvInput.latestCurrent()
-        else
-            pvInput = require( './forecast' ).pvInput;
+        if (!pvInput) pvInput = require( './forecast' ).pvInput;
+
+        lastCurrentTime = pvInput.latestCurrent();
+        logger.debug('lastcurrenttime: ' + new Date(lastCurrentTime).toTimeString());
 
         const now = new Date();
         //console.log("sunset is in " + solarState.getSunset());
         // approx 2 hours before sunset or before the current into 
         // the battery becomes 0
+        // FIXME: twoHousrTwentee can be removed once lastcurrenttime is properly calculated
+        //        and working and the average load with relay on is known
         const twoHoursTwenteeInMS = 8400000; // (2 * 60 + 20) * 60 * 1000;
         const timeTillNullChargeInMS = lastCurrentTime - now.getTime()
               - twoHoursTwenteeInMS;
+        logger.debug('timeTillNullChargeInMS: ' + new Date(timeTillNullChargeInMS).toTimeString());
         // FIXME: a timer will "get lost" if the server is restarted while 
         //        switched on. Better to use protection class and feed in sunset
         //        among parameters current, voltages, soc...
@@ -241,6 +298,7 @@ class FlowProtection {
         this.sunsetTimer = setTimeout(this.removeLoad.bind(this), timeTillNullChargeInMS);
     }
     
+    // TODO: a failure condition prevail for a minimum time of e.g. 1 minute to raise an alarm
     setFlow(flow) {
         if (! flow) return; // on null and undefined return
         let I = flow.getCurrent();
@@ -250,42 +308,74 @@ class FlowProtection {
         let Ustr = U.toFixed(2) + "V";
 
         if (I <= this.config.absMinCurrent) {
-            this.alarm.raise(this.id + 0, this.config.alarmLevel,
+            let isRaised = this.alarm.raise(this.id + 0, this.config.alarmLevel,
                              this.name + ": too much load " + Istr,
                              "Removing load from battery");
             // FIXME: to be integer put action text only if alarmLevel === 2
-            if (this.config.alarmLevel >= 1) this.removeLoad();
+            if (this.config.alarmLevel >= 1 && isRaised) this.removeLoad();
         }
-        else {
-            this.alarm.clear(this.id + 0, true); // FIXME: Hysteresis needed
+        else if (I > this.config.absMinCurrent * 1.05) {
+            this.alarm.clear(this.id + 0, true);
         }
 
         if (I >= this.config.absMaxCurrent) {
-            this.alarm.raise(this.id + 1, this.config.alarmLevel,
+            let isRaised = this.alarm.raise(this.id + 1, this.config.alarmLevel,
                              this.name + ": high charge current " + Istr,
                              "Switching load on battery");
-            if (this.config.alarmLevel >= 1) this.switchLoad();
+            if (this.config.alarmLevel >= 1 && isRaised) this.switchLoad();
         }
-        else this.alarm.clear(this.id + 1, true);
-
+        else if (I < this.config.absMaxCurrent * 0.95) {
+            this.alarm.clear(this.id + 1, true);
+        }
+        
         if (U <= this.config.minVoltage && Math.abs(I) <= Math.abs(this.config.whenCurrentBelow)) {
-            this.alarm.raise(this.id + 2, this.config.alarmLevel,
+            let isRaised = this.alarm.raise(this.id + 2, this.config.alarmLevel,
                              this.name + ": battery capacity too low; voltage drop to " + Ustr + " for small current " + Istr,
                              "Removing load from battery");
-            if (this.config.alarmLevel >= 1) this.removeLoad();
+            if (this.config.alarmLevel >= 1 && isRaised) this.removeLoad();
         }
-        else this.alarm.clear(this.id + 2, true);
+        else if (U > this.config.minVoltage * 1.05 &&
+                 Math.abs(I) > Math.abs(this.config.whenCurrentBelow) * 1.05) {
+            this.alarm.clear(this.id + 2, true);
+        }
 
         if (U >= this.config.maxVoltage && Math.abs(I) >= Math.abs(this.config.whenCurrentAbove)) {
-            this.alarm.raise(this.id + 3, this.config.alarmLevel,
+            let isRaised = this.alarm.raise(this.id + 3, this.config.alarmLevel,
                              this.name + ": battery capacity too high; voltage " + Ustr + " and charging at " + Istr,
                              "Switching load on battery");
-            if (this.config.alarmLevel >= 1) this.switchLoad();
+            if (this.config.alarmLevel >= 1 && isRaised) this.switchLoad();
         }
-        else this.alarm.clear(this.id + 3, true);
+        else if (U < this.config.maxVoltage * 0.95 &&
+                 Math.abs(I) < Math.abs(this.config.whenCurrentAbove) * 0.95) {
+            this.alarm.clear(this.id + 3, true);
+        }
     }
 }
 
+class BatteryProtection extends Switcher {
+    constructor(actor) {
+        super(actor);
+        this.minDiffForCharge = 1.0;
+        this.minAccuVoltage = 12.0;// FIXME: make configurable!!!
+    };
+
+    setVoltages(topVoltage, bottomVoltage, pvVoltage) {
+        // logger.debug('BatteryProtection: ' + topVoltage);
+        // logger.debug('BatteryProtection: ' + bottomVoltage);
+        // logger.debug('BatteryProtection: ' + pvVoltage);
+        // FIXME: add alarms
+        if (topVoltage + bottomVoltage >= pvVoltage + this.minDiffForCharge) {
+            // FIXME: does not allow to switch at night (switches back immediately)
+            //this.actor.setRelay(0);
+        }
+        if (topVoltage < this.minAccuVoltage) {
+            this.actor.setRelay(0);
+        }
+        if (bottomVoltage < this.minAccuVoltage) {
+            this.actor.setRelay(0);
+        }
+    }
+}
 
 
 // Protection / Alarm if BMV alarm or MPPT alarming bits
@@ -350,5 +440,6 @@ class ChargerOverheatProtection {
 
 
 module.exports.Alarm = Alarm;
+module.exports.BatteryProtection = BatteryProtection;
 module.exports.FlowProtection = FlowProtection;
 module.exports.ChargerOverheatProtection = ChargerOverheatProtection;

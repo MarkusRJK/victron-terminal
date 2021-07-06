@@ -7,10 +7,11 @@ const Math = require('mathjs');
 const MPPTclient = require('tracer').MPPTDataClient;
 const Alarm = require('./protection.js').Alarm;
 const FlowProtection = require('./protection.js').FlowProtection;
+const BatteryProtection = require('./protection.js').BatteryProtection;
 const ChargerOverheatProtection = require('./protection.js').ChargerOverheatProtection;
 var log4js = require('log4js');
 const ECMeter = require( './meter' ).EnergyAndChargeMeter;
-var pvInput = require( './forecast' ).pvInput;
+const PVInputFromIrradianceML = require( './forecast' ).PVInputFromIrradianceML;
 var forecast = require( './forecast' );
 
 
@@ -682,6 +683,7 @@ class VEdeviceSerialAccu extends VEdeviceClass {
         // map an additional component topVoltage
         // FIXME: which works reliably this.cache or bmvdata (which is not exported)
         this.cache = this.update();
+        // FIXME: replace all bmvdata's by this.cache
         let bmvdata = this.update();
         this.cache['topVoltage'] = this.createObject(0.001,  "V", "Top Voltage",
                                                      { 'precision': -1 });
@@ -724,6 +726,7 @@ class VEdeviceSerialAccu extends VEdeviceClass {
                 if (midVoltage === null) return;
                 newValue = newValue / this.cache.upperVoltage.nativeToUnitFactor;
                 this.cache.topVoltage.newValue = newValue - midVoltage;
+                this.cache.isDirty = true;
                 // TODO: add returned object to changeObjects
                 // FIXME: set dirty flag and run updateValuesAnd...() if dirty
                 //this.rxtx.runOnFunction('topVoltage', this.cache.topVoltage);
@@ -742,6 +745,7 @@ class VEdeviceSerialAccu extends VEdeviceClass {
                 if (upperVoltage === null) return;
                 newValue = newValue / this.cache.midVoltage.nativeToUnitFactor;
                 this.cache.topVoltage.newValue = upperVoltage - newValue;
+                this.cache.isDirty = true;
                 // TODO: add returned object to changeObjects
                 //this.rxtx.runOnFunction('topVoltage', this.cache.topVoltage);
             }).bind(this)
@@ -882,7 +886,7 @@ class BMS extends VEdeviceSerialAccu {
     stopPolling() {
         logger.debug("BMS::stopPolling");
         clearInterval(this.interval);
-        if (pvInput) pvInput.terminate();
+        if (this.pvInput) this.pvInput.terminate();
         this.alarms.terminate();
         ECMeter.terminate(); // write out meter data
     }
@@ -923,6 +927,7 @@ class BMS extends VEdeviceSerialAccu {
 
         // Protection and alarms - must be created before registerListener
         this.alarms = new Alarm(this.appConfig.Alarms.history, this.appConfig.Alarms.silenceInMin);
+        this.batteryProtection = new BatteryProtection(this);
         this.bottomBattProtectionLP = new FlowProtection(0, 'Bottom battery' , this.appConfig.BatteryProtectionLowPriority, this.alarms, this);
         this.bottomBattProtectionHP = new FlowProtection(1, 'Bottom battery' , this.appConfig.BatteryProtectionHighPriority, this.alarms, this);
         this.topBattProtectionLP    = new FlowProtection(2, 'Top battery' , this.appConfig.BatteryProtectionLowPriority, this.alarms, this);
@@ -945,7 +950,7 @@ class BMS extends VEdeviceSerialAccu {
             let lat    = this.appConfig.openWeatherAPI.latitude;
             let lon    = this.appConfig.openWeatherAPI.longitude;
 
-            forecast.updateForecast(apiKey, lat, lon, ECMeter);
+            this.pvInput = new PVInputFromIrradianceML(ECMeter, lat, lon, apiKey);
         }
         else throw 'OpenWeather configuration missing';
     }
@@ -985,13 +990,22 @@ class BMS extends VEdeviceSerialAccu {
         logger.trace('BMS::setFlows');
         // FIXME: average equivalent currents and voltages!!
         if (changedMap.has('midVoltage')) {
+            // logger.debug('BMS::setFlows - midVoltage: ' +
+            //              changedMap.get('midVoltage').newValue + ', ' +
+            //              changedMap.get('midVoltage').value);
             this.bottomFlow.setVoltage(changedMap.get('midVoltage').newValue);
         }
         if (changedMap.has('topVoltage')) {
+            // logger.debug('BMS::setFlows - topVoltage: ' +
+            //              changedMap.get('topVoltage').newValue + ', ' +
+            //              changedMap.get('topVoltage').value);
             this.topFlow.setVoltage(changedMap.get('topVoltage').newValue);
         }
         let batteryVoltage = -1;
         if (changedMap.has('upperVoltage')) {
+            // logger.debug('BMS::setFlows - upperVoltage: ' +
+            //              changedMap.get('upperVoltage').newValue + ', ' +
+            //              changedMap.get('upperVoltage').value);
             batteryVoltage = changedMap.get('upperVoltage').newValue;
         }
         if (changedMap.has('MPPTbatteryVoltage')) {
@@ -1033,18 +1047,18 @@ class BMS extends VEdeviceSerialAccu {
     processData(changedMap, timeStamp) {
         logger.trace('BMS::processData');
         // FIXME: try catch to determine "Assignment to const variable"
-        // try {
-             this.setFlows(changedMap, timeStamp);
-        // }
-        // catch(err) {
-        //     logger.error(err);
-        // }
-        // try {
-             this.protectFlows(timeStamp);
-        // }
-        // catch(err) {
-        //     logger.error(err);
-        // }
+        try {
+            this.setFlows(changedMap, timeStamp);
+        }
+        catch(err) {
+            logger.error('setFlows failed: ' + err);
+        }
+        try {
+            this.protectFlows(timeStamp);
+        }
+        catch(err) {
+            logger.error('protectFlows failed: ' + err);
+        }
 
         let UPv   = this.pvFlow.getVoltage();
         let UBat  = this.chargerFlow.getVoltage();
@@ -1053,27 +1067,41 @@ class BMS extends VEdeviceSerialAccu {
         let IBat  = this.topFlow.getCurrent() * 2;
         //logger.debug('BMS::processData - IPv = ' + IPv + ' IBat = ' + IBat);
 
-        let relayState = this.update().relayState.value; // 'ON' or 'OFF'
-        // try {
-             ECMeter.setFlows(UPv, UBat, IPv, ILoad, IBat, relayState, timeStamp);
-        // }
-        // catch(err) {
-        //     logger.error(err);
-        // }
+        try {
+            let relayState = ('relayState' in this.update() ? this.update().relayState.value : 'OFF'); // 'ON' or 'OFF'
+            ECMeter.setFlows(UPv, UBat, IPv, ILoad, IBat, relayState, timeStamp);
+        }
+        catch(err) {
+            logger.error('ECMeter.setFlows failed: ' + err);
+        }
 
         //if (pvInput) pvInput.addFlow(this.pvFlow, timeStamp);
-        // try {
-            if (pvInput) pvInput.setFlow(this.chargerFlow,
-                                         this.pvFlow.getVoltage(),
-                                         timeStamp);
+        try {
+            if (this.pvInput) {
+                this.pvInput.setFlow(this.chargerFlow,
+                                     UPv,
+                                     timeStamp);
+                if (changedMap.has('MPPTbatteryTemperature')) {
+                    let temp = changedMap.get('MPPTbatteryTemperature').newValue;
+                    this.pvInput.setTemp(temp, timeStamp);
+                }
+            }
             else {
                 logger.warn('BMS::processData - pvInput not yet available');
-                pvInput = require( './forecast' ).pvInput;
+                //pvInput = require( './forecast' ).pvInput;
             }
-        // }
-        // catch(err) {
-        //     logger.error(err);
-        // }
+        }
+        catch(err) {
+            logger.error('pvInput.setFlow failed: ' + err);
+        }
+        try {
+            this.batteryProtection.setVoltages(this.topFlow.getVoltage(),
+                                               this.bottomFlow.getVoltage(),
+                                               UPv);
+        }
+        catch(err) {
+            logger.error('batteryProtection failed: ' + err);
+        }
     }
 
     setAccuChainVoltage(newVoltage, oldVoltage, timeStamp, key) {
