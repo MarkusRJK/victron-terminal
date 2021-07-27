@@ -1078,9 +1078,7 @@ class BMS extends VEdeviceSerialAccu {
         //if (pvInput) pvInput.addFlow(this.pvFlow, timeStamp);
         try {
             if (this.pvInput) {
-                this.pvInput.setFlow(this.chargerFlow,
-                                     UPv,
-                                     timeStamp);
+                this.pvInput.setFlow(this.chargerFlow, timeStamp);
                 if (changedMap.has('MPPTbatteryTemperature')) {
                     let temp = changedMap.get('MPPTbatteryTemperature').newValue;
                     this.pvInput.setTemp(temp, timeStamp);

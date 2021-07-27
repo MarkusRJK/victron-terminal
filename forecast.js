@@ -58,9 +58,8 @@ class PVInputFromIrradianceML {
             this.UFlatitude = lat;
             this.UFlongitude = lon;
             this.UFapiKey = apiKey;
-            this.lastU = null; // last voltage
-            this.lastI = null; // last current
             this.temp = 0;
+            this.AvgTemperature = 0;
             this.lastTime = 0;
             this.sunrise = 0;
             this.earliestTimeOfCurrent = 0;
@@ -142,17 +141,14 @@ class PVInputFromIrradianceML {
     }
 
     setTemp(temp, time) {
-        if (this.lastTime === 0) return;
-        if (!time) time = new Date();
-        let timeDiff = time - this.lastTime;
-        this.temp += temp * timediff;
+        logger.trace('PVInputFromIrradianceML::setTemp');
+        this.temp = temp;
+        this.addFlowAndTemp(time);
     }
     
-    setFlow(chargerFlow, pvVoltage, time) {
+    setFlow(chargerFlow, time) {
         logger.trace('PVInputFromIrradianceML::setFlow(.)');
-        this.lastU = chargerFlow.getVoltage();
-        this.lastI = chargerFlow.getCurrent();
-        this.addFlow(time);
+        this.addFlowAndTemp(time);
 
         // morning before or after sunrise but before sunset
         // 0 < time < this.sunset ==> this.earliestTimeOfCurrent != 0
@@ -174,37 +170,35 @@ class PVInputFromIrradianceML {
                        this.meter.getEAbsorbed(meterId).toFixed(4) + ',\t' +
                        this.meter.getELoss1(meterId).toFixed(4) + ',\t' +
                        this.meter.getELoss2(meterId).toFixed(4) + ',\t' +
-                       this.pcClouds + this.temp / this.EDiffuseHorizontal + '\n');
+                       this.pcClouds + ',\t' +
+                       this.AvgTemperature / this.EDiffuseHorizontal + '\n');
     }
 
-    addFlow(time) {
+    addFlowAndTemp(time) {
         let doExit = false;
         if (!time) time = new Date();
-        logger.trace('PVInputFromIrradianceML::addFlow(' + time + ')');
-        // wait until the first flow has come in
-        if (this.lastU === null || this.lastI === null) {
-            logger.debug('PVInputFromIrradianceML::addFlow: no flow available');
-            doExit = true;
-        }
+        logger.trace('PVInputFromIrradianceML::addFlowAndTemp(' + time + ')');
         // time dependent processing:
         if (!this.sunset || !this.sunrise) {
-            logger.debug('PVInputFromIrradianceML::addFlow: sunrise or sunset not available');
+            logger.debug('PVInputFromIrradianceML::addFlowAndTemp: sunrise or sunset not available');
             doExit = true;
         }
         if (time < this.sunrise || time > this.sunset) {
-            //logger.info('PVInputFromIrradianceML::addFlow: night time');
+            //logger.info('PVInputFromIrradianceML::addFlowAndTemp: night time');
             doExit = true;
         }
         // if first call then set time only
         // if hour lapses then start new bucket
         if (this.lastTime === 0) {
             this.lastTime = time;
-            logger.debug('PVInputFromIrradianceML::addFlow: first time - skip flow');
+            logger.debug('PVInputFromIrradianceML::addFlowAndTemp: first time - skip flow');
             doExit = true; // skip this flow
         }
         if (doExit) return;
 
         let timeDiff = time - this.lastTime;
+
+        this.AvgTemperature += this.temp * timeDiff; // needs to be divided by this.EDiffuseHorizontal
 
         // the timestamp weather.current.dt is between
         // hourly[0].dt and hourly[1].dt. If time goes beyond
@@ -213,6 +207,7 @@ class PVInputFromIrradianceML {
         let c = Math.abs(Math.cos(this.scaleSunRiseAndSetToPI(time)));
         // estimated energy from the direct normal and diffuse horizontal irradiance
         this.EDirectNormal      += s * timeDiff; // needs to be multiplied with (1-clouds)
+        // FIXME: rename to something else as this should be 1 hour and reflects the error through incremental adds
         this.EDiffuseHorizontal += timeDiff;     // needs to be multiplied with clouds
         this.EDirectOrthogonal  += c * timeDiff; // needs to be multiplied with clouds
 

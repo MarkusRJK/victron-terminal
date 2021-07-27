@@ -328,25 +328,29 @@ class FlowProtection { // shall extends Switcher
             this.alarm.clear(this.id + 1, true);
         }
         
-        if (U <= this.config.minVoltage && Math.abs(I) <= Math.abs(this.config.whenCurrentBelow)) {
+        // FIXME: correct config values when read from file instead of Math.abs here
+        if (U <= this.config.minVoltage &&
+            I >= 0 &&
+            I <= Math.abs(this.config.whenCurrentBelow)) {
             let isRaised = this.alarm.raise(this.id + 2, this.config.alarmLevel,
                              this.name + ": battery capacity too low; voltage drop to " + Ustr + " for small current " + Istr,
                              "Removing load from battery");
             if (this.config.alarmLevel >= 1 && isRaised) this.removeLoad();
         }
         else if (U > this.config.minVoltage * 1.05 &&
-                 Math.abs(I) > Math.abs(this.config.whenCurrentBelow) * 1.05) {
+                 I > Math.abs(this.config.whenCurrentBelow) * 1.05) {
             this.alarm.clear(this.id + 2, true);
         }
 
-        if (U >= this.config.maxVoltage && Math.abs(I) >= Math.abs(this.config.whenCurrentAbove)) {
+        if (U >= this.config.maxVoltage && I >= Math.abs(this.config.whenCurrentAbove)) {
             let isRaised = this.alarm.raise(this.id + 3, this.config.alarmLevel,
                              this.name + ": battery capacity too high; voltage " + Ustr + " and charging at " + Istr,
                              "Switching load on battery");
             if (this.config.alarmLevel >= 1 && isRaised) this.switchLoad();
         }
         else if (U < this.config.maxVoltage * 0.95 &&
-                 Math.abs(I) < Math.abs(this.config.whenCurrentAbove) * 0.95) {
+                 I >= 0 &&
+                 I < Math.abs(this.config.whenCurrentAbove) * 0.95) {
             this.alarm.clear(this.id + 3, true);
         }
     }
@@ -366,6 +370,7 @@ class BatteryProtection extends Switcher {
         // FIXME: add alarms
         if (topVoltage + bottomVoltage >= pvVoltage + this.minDiffForCharge) {
             // FIXME: does not allow to switch at night (switches back immediately)
+            // use a mask flag that can be set when relay is switches manually
             //this.actor.setRelay(0);
         }
         if (topVoltage < this.minAccuVoltage) {
