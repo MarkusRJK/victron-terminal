@@ -28,7 +28,7 @@ class Meter {
     // \param  index of meter to reset start, if missing a new meter is generated
     // \return index of meter
     setStart(index) {
-        logger.debug('Meter::setStart'); // FIXME: revert to trace
+        logger.debug('Meter::setStart');
         let i = this.start;
         // if index ==> change existing start of a counter
         if (typeof index !== 'undefined' && index !== null &&
@@ -55,14 +55,22 @@ class Meter {
 }
 
 
+// \class EnergyAndChargeMeter (singleton)
 class EnergyAndChargeMeter extends Meter {
     constructor() {
         super();
         logger.trace('EnergyAndChargeMeter::constructor');
-        this.resetAccumulations();
-        this.readData();
-        this.setFlows(0, 0, 0, 0, 0, 'OFF', 0);
-        this.start = 0;
+
+        if(! EnergyAndChargeMeter.instance){
+            this.resetAccumulations();
+            this.readData();
+            this.setFlows(0, 0, 0, 0, 0, 'OFF', 0);
+            this.start = 0;
+
+            EnergyAndChargeMeter.instance = this;
+            Object.freeze(EnergyAndChargeMeter);
+        }
+        return EnergyAndChargeMeter.instance;
     }
 
     resetAccumulations() {
@@ -236,6 +244,9 @@ class EnergyAndChargeMeter extends Meter {
         if (this.IBat < 0) drawnLastMinutes = -this.UBat * this.IBat * timeDiff;
         return (this.meter.EWMs.drawn - subtract + drawnLastMinutes) * convMsToH;
     }
+    getEUsed(index) {
+        return this.getEDirectUse(index) + this.getEDrawn(index);
+    }
     // convert Energy to Euro in IRL
     toEuroInclVAT(energyInWh) {
         //                  to kWh  to Euro  +VAT
@@ -296,7 +307,7 @@ class EnergyAndChargeMeter extends Meter {
             AhAbsorbed:   this.getCAbsorbed().toFixed(4),
             AhDrawn:      this.getCDrawn().toFixed(4),
 
-            kWhHarvested: this.toEuroInclVAT(this.getEDirectUse() + this.getEDrawn()).toFixed(2),
+            kWhHarvested: this.toEuroInclVAT(this.getEUsed()).toFixed(2)
         };
         let jData = JSON.stringify(data);
         logger.info('Writing meter data to file ' + file);

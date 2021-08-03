@@ -76,7 +76,8 @@ class PVInputFromIrradianceML {
             this.updateForecast();
 
             this.csv = fs.createWriteStream('/var/log/pv.log', {flags: 'a'});
-            // FIXME: addd column pop
+            // FIXME: addd column weather.current.pop (probability of percepation)
+            //        and weather.current.rain (mm per hour)
             this.csv.write('start time,\tDNI,\tDHI,\tdirectUse,\tabsorb.,\tloss1,\tloss2,\tclouds,\ttemp (' +
                            new Date().toDateString() + ')\n');
 
@@ -351,7 +352,6 @@ class PVInputFromIrradianceML {
             }
         }
     };
-
 }
 
 

@@ -20,6 +20,7 @@
     "everpolate": "0.0.3",
     "log4js": "^2.0.0",
     "mathjs": "^5.1.0",
+    "node-cron": "^3.0.0",
     "terminal-kit": "^2.1.0",
     "ve_bms_forecast": "git+https://git@github.com/MarkusRJK/ve_bms_forecast.git#add-singleton_class_ES6"
   },

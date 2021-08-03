@@ -13,7 +13,8 @@ var log4js = require('log4js');
 const ECMeter = require( './meter' ).EnergyAndChargeMeter;
 const PVInputFromIrradianceML = require( './forecast' ).PVInputFromIrradianceML;
 var forecast = require( './forecast' );
-
+var cron = require('node-cron');
+var usage = require('./usage-statistic').HourlyUsageBuckets;
 
 
 let mppt = new MPPTclient(0); // poking in intervals done below
@@ -147,7 +148,7 @@ class IntegralOverTime
         if (timeStamp !== undefined && timeStamp !== null)
             this.lastTime = timeStamp;
         else
-            this.lastTime = new Date(); // FIXME: new Date in constructor causes long first duration
+            this.lastTime = Date.now();
         this.firstTime    = this.lastTime;
         this.isAscending  = false;
         this.isDescending = false;
@@ -245,7 +246,7 @@ class Charge extends IntegralOverTime {
         if (timeStamp !== undefined && timeStamp !== null)
             currentTime = timeStamp;
         else
-            currentTime = new Date(); // time in milliseconds since epoch
+            currentTime = Date.now(); // time in milliseconds since epoch
         this.add(current, currentTime * 0.001);
     }
 }
@@ -854,6 +855,27 @@ class BMS extends VEdeviceSerialAccu {
         //this.lowerIncCapacity = new IntegralOverTime(this.bottomFlow.getCurrent());
         //this.upperIncCapacity = new IntegralOverTime(this.topFlow.getCurrent());
 
+        this.usage = new usage(14); // FIXME: read from config file
+        this.usageMeterId = ECMeter.setStart();
+        //this.baseUsage = new usage();
+
+        // schedule a write every full hour
+        //                                   ┌────────────── second (optional)
+        //                                   │ ┌──────────── minute
+        //                                   │ │ ┌────────── hour
+        //                                   │ │ │ ┌──────── day of month
+        //                                   │ │ │ │ ┌────── month
+        //                                   │ │ │ │ │ ┌──── day of week
+        //                                   │ │ │ │ │ │
+        //                                   │ │ │ │ │ │
+        this.writeUsageTask = cron.schedule('0 0 * * * *', () => {
+            logger.trace('cron: write usage, reset meter for next hour');
+            let thisHour = (new Date()).getHours();
+            if (thisHour === 0) this.usage.setNextDay();
+            this.usage.writeData();
+            ECMeter.setStart(this.usageMeterId);
+        });
+
         this.registerListener('ChangeList', this.processData.bind(this));
 
         this.hideBMVdisplayParams();
@@ -888,7 +910,15 @@ class BMS extends VEdeviceSerialAccu {
         clearInterval(this.interval);
         if (this.pvInput) this.pvInput.terminate();
         this.alarms.terminate();
+
         ECMeter.terminate(); // write out meter data
+
+        this.writeUsageTask.stop();
+        //this.switchTask.stop();
+        // FIXME: destroy() errors although api says that tasks have destroy()
+        //this.writeTask.destroy(); 
+        //this.switchTask.destroy(); 
+        this.usage.terminate();
     }
 
 
@@ -927,16 +957,18 @@ class BMS extends VEdeviceSerialAccu {
 
         // Protection and alarms - must be created before registerListener
         this.alarms = new Alarm(this.appConfig.Alarms.history, this.appConfig.Alarms.silenceInMin);
-        this.batteryProtection = new BatteryProtection(this);
-        this.bottomBattProtectionLP = new FlowProtection(0, 'Bottom battery' , this.appConfig.BatteryProtectionLowPriority, this.alarms, this);
-        this.bottomBattProtectionHP = new FlowProtection(1, 'Bottom battery' , this.appConfig.BatteryProtectionHighPriority, this.alarms, this);
-        this.topBattProtectionLP    = new FlowProtection(2, 'Top battery' , this.appConfig.BatteryProtectionLowPriority, this.alarms, this);
-        this.topBattProtectionHP    = new FlowProtection(3, 'Top battery' , this.appConfig.BatteryProtectionHighPriority, this.alarms, this);
-        this.chargerProtectionLP = new FlowProtection(4, 'Charger' , this.appConfig.ChargerProtectionLowPriority, this.alarms, this);
-        this.chargerProtectionHP = new FlowProtection(5, 'Charger' , this.appConfig.ChargerProtectionHighPriority, this.alarms, this);
-        this.chargerLoadProtectionLP = new FlowProtection(6, 'Charger load' , this.appConfig.ChargerLoadProtectionLowPriority, this.alarms, this);
-        this.chargerLoadProtectionHP = new FlowProtection(7, 'Charger load' , this.appConfig.ChargerLoadProtectionHighPriority, this.alarms, this);
-        this.chargerOverheatProtectionHP = new ChargerOverheatProtection(8, 'Charger Overheat' , this.appConfig.ChargerOverheatProtectionHighPriority, this.alarms, this);
+        logger.debug('this.appConfig has Protection: ' + ('Protection' in this.appConfig));
+        let protection = this.appConfig.Protection;
+        this.batteryProtection = new BatteryProtection(protection.BatteryProtection, this);
+        this.bottomBattProtectionLP = new FlowProtection(0, 'Bottom battery' , protection.BatteryProtectionLowPriority, this.alarms, this);
+        this.bottomBattProtectionHP = new FlowProtection(1, 'Bottom battery' , protection.BatteryProtectionHighPriority, this.alarms, this);
+        this.topBattProtectionLP    = new FlowProtection(2, 'Top battery' , protection.BatteryProtectionLowPriority, this.alarms, this);
+        this.topBattProtectionHP    = new FlowProtection(3, 'Top battery' , protection.BatteryProtectionHighPriority, this.alarms, this);
+        this.chargerProtectionLP = new FlowProtection(4, 'Charger' , protection.ChargerProtectionLowPriority, this.alarms, this);
+        this.chargerProtectionHP = new FlowProtection(5, 'Charger' , protection.ChargerProtectionHighPriority, this.alarms, this);
+        this.chargerLoadProtectionLP = new FlowProtection(6, 'Charger load' , protection.ChargerLoadProtectionLowPriority, this.alarms, this);
+        this.chargerLoadProtectionHP = new FlowProtection(7, 'Charger load' , protection.ChargerLoadProtectionHighPriority, this.alarms, this);
+        this.chargerOverheatProtectionHP = new ChargerOverheatProtection(8, 'Charger Overheat' , protection.ChargerOverheatProtectionHighPriority, this.alarms, this);
 
         if ('Tracer' in this.appConfig) {
             if ('interval_sec' in this.appConfig.Tracer)
@@ -957,32 +989,36 @@ class BMS extends VEdeviceSerialAccu {
 
     protectFlows(time) {
         logger.trace("BMS::protectFlows");
-        if (this.bottomBattProtectionLP) {
-            this.bottomBattProtectionLP.setFlow(this.bottomFlow, time);
-        }
-        if (this.bottomBattProtectionHP) {
-            this.bottomBattProtectionHP.setFlow(this.bottomFlow, time);
-        }
-        if (this.topBattProtectionLP) {
-            this.topBattProtectionLP.setFlow(this.topFlow, time);
-        }
-        if (this.topBattProtectionHP) {
-            this.topBattProtectionHP.setFlow(this.topFlow, time);
-        }
-        if (this.chargerProtectionLP) {
-            this.chargerProtectionLP.setFlow(this.chargerFlow, time);
-        }
-        if (this.chargerProtectionHP) {
-            this.chargerProtectionHP.setFlow(this.chargerFlow, time);
-        }
-        if (this.chargerLoadProtectionLP) {
-            this.chargerLoadProtectionLP.setFlow(this.loadFlow, time);
-        }
-        if (this.chargerLoadProtectionHP) {
-            this.chargerLoadProtectionHP.setFlow(this.loadFlow, time);
-        }
-        if (this.chargerOverheatProtectionHP) {
-            this.chargerOverheatProtectionHP.setFlow(this.pvFlow, time);
+        try {
+            if (this.bottomBattProtectionLP) {
+                this.bottomBattProtectionLP.setFlow(this.bottomFlow, time);
+            }
+            if (this.bottomBattProtectionHP) {
+                this.bottomBattProtectionHP.setFlow(this.bottomFlow, time);
+            }
+            if (this.topBattProtectionLP) {
+                this.topBattProtectionLP.setFlow(this.topFlow, time);
+            }
+            if (this.topBattProtectionHP) {
+                this.topBattProtectionHP.setFlow(this.topFlow, time);
+            }
+            if (this.chargerProtectionLP) {
+                this.chargerProtectionLP.setFlow(this.chargerFlow, time);
+            }
+            if (this.chargerProtectionHP) {
+                this.chargerProtectionHP.setFlow(this.chargerFlow, time);
+            }
+            if (this.chargerLoadProtectionLP) {
+                this.chargerLoadProtectionLP.setFlow(this.loadFlow, time);
+            }
+            if (this.chargerLoadProtectionHP) {
+                this.chargerLoadProtectionHP.setFlow(this.loadFlow, time);
+            }
+            if (this.chargerOverheatProtectionHP) {
+                this.chargerOverheatProtectionHP.setFlow(this.pvFlow, time);
+            }
+        } catch (err) {
+            logger.error(err);
         }
     }
 
@@ -1092,6 +1128,12 @@ class BMS extends VEdeviceSerialAccu {
         catch(err) {
             logger.error('pvInput.setFlow failed: ' + err);
         }
+
+        const hour = new Date(timeStamp).getHours();
+        // this.getEDirectUse(index) + this.getEDrawn(index);
+        this.usage.logUsage(hour, ECMeter.getEUsed(this.usageMeterId));
+        //this.baseUsage.logUsage(hour, ECMeter.getEUsed(meterId));
+
         try {
             this.batteryProtection.setVoltages(this.topFlow.getVoltage(),
                                                this.bottomFlow.getVoltage(),

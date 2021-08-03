@@ -3,83 +3,90 @@
         "history"      : 20,
         "silenceInMin" : 5
     },
-    "BatteryProtectionLowPriority" : {
-        "note"             : "lead accus in parallel => 10.5V - 14.52V",
-        "alarmLevel"       : 0,
-        "absMinCurrent"    : -130, 
-        "absMaxCurrent"    : 38,
-        "minVoltage"       : 12,
-        "whenCurrentBelow" : 2,
-        "note_maxVoltage"  : "lead accu: float-charge voltage = 2.23V/cell => 13.38V",
-        "maxVoltage"       : 13.5,
-        "note_current"     : "currents are per accu, the current feed in is halt the total, i.e. for 2 batteries", 
-        "whenCurrentAbove" : 6
+    "Protection" : {
+        "BatteryProtectionLowPriority" : {
+            "note"             : "lead accus in parallel => 10.5V - 14.52V",
+            "alarmLevel"       : 0,
+            "absMinCurrent"    : -130, 
+            "absMaxCurrent"    : 38,
+            "minVoltage"       : 12,
+            "whenCurrentBelow" : 2,
+            "note_maxVoltage"  : "lead accu: float-charge voltage = 2.23V/cell => 13.38V",
+            "maxVoltage"       : 13.5,
+            "note_current"     : "currents are per accu, the current feed in is halt the total, i.e. for 2 batteries", 
+            "whenCurrentAbove" : 6
+        },
+        "BatteryProtectionHighPriority" : {
+            "note"             : "lead accus in parallel => 10.5V - 14.52V",
+            "alarmLevel"       : 2,
+            "absMinCurrent"    : -150, 
+            "absMaxCurrent"    : 45,
+            "FIXME:": "check that minVoltage in code is mid or topVoltage",
+            "note_minVoltage"  : "lead accu: end-of-discharge minVoltage = 1.75V/cell => 10.5V",
+            "minVoltage"       : 11.5,
+            "whenCurrentBelow" : 2,
+            "note_maxVoltage"  : "lead accu: end-of-charge voltage = 2.42V/cell => 14.52V",
+            "maxVoltage"       : 14.4,
+            "note_current"     : "currents are per accu, the current feed in is halt the total, i.e. for 2 batteries", 
+            "whenCurrentAbove" : 3
+        },
+        "ChargerProtectionLowPriority" : {
+            "alarmLevel"       : 0,
+            "absMinCurrent"    : -15, 
+            "absMaxCurrent"    : 40,
+            "note_minVoltage"  : "2 lead accus in series => minVoltage >= 21V",
+            "minVoltage"       : 24,
+            "whenCurrentBelow" : 2,
+            "FIXME:": "minVoltage when current below must be there for several seconds!",
+            "note_maxVoltage"  : "2 lead accus in series => charge voltage can reach 36V",
+            "maxVoltage"       : 33,
+            "whenCurrentAbove" : 2
+        },
+        "ChargerProtectionHighPriority" : {
+            "alarmLevel"       : 2,
+            "absMinCurrent"    : -20, 
+            "absMaxCurrent"    : 45,
+            "note_minVoltage"  : "2 lead accus in series => minVoltage >= 21V",
+            "minVoltage"       : 23,
+            "whenCurrentBelow" : 2,
+            "note_maxVoltage"  : "2 lead accus in series => charge voltage can reach 36V",
+            "maxVoltage"       : 35,
+            "whenCurrentAbove" : 2
+        },
+        "ChargerLoadProtectionLowPriority" : {
+            "alarmLevel"       : 0,
+            "absMinCurrent"    : -15,
+            "absMaxCurrent"    : 1,
+            "note_whenCurrentBelow": "disabled",
+            "minVoltage"       : 24,
+            "whenCurrentBelow" : 0,
+            "maxVoltage"       : 27,
+            "whenCurrentAbove" : 13
+        },
+        "ChargerLoadProtectionHighPriority" : {
+            "alarmLevel"       : 2,
+            "absMinCurrent"    : -20, 
+            "absMaxCurrent"    : 1,
+            "minVoltage"       : 23,
+            "note_whenCurrentBelow": "disabled",
+            "whenCurrentBelow" : 0,
+            "note_maxVoltage"  : "Derived from max load power=20A*24V/29V",
+            "maxVoltage"       : 29,
+            "whenCurrentAbove" : 16.5
+        },
+        "ChargerOverheatProtectionHighPriority" : {
+            "note"             : "occassionally the charger decides to discharge the battery (I < 0), while V > maxVoltage",
+            "alarmLevel"       : 2,
+            "maxVoltage"       : 32,
+            "whenCurrentBelow" : -0.001
+        },
+        "BatteryProtection" : {
+            "note"             : "Remove load if one of the accus below minAccuVoltage or PV voltage < voltage of batteries in series plus min. diff for charge",
+            "minAccuVoltage"   : 12,
+            "minDiffForCharge" : 1
+        }
     },
-    "BatteryProtectionHighPriority" : {
-        "note"             : "lead accus in parallel => 10.5V - 14.52V",
-        "alarmLevel"       : 2,
-        "absMinCurrent"    : -150, 
-        "absMaxCurrent"    : 45,
-        "FIXME:": "check that minVoltage in code is mid or topVoltage",
-        "note_minVoltage"  : "lead accu: end-of-discharge minVoltage = 1.75V/cell => 10.5V",
-        "minVoltage"       : 11.5,
-        "whenCurrentBelow" : 2,
-        "note_maxVoltage"  : "lead accu: end-of-charge voltage = 2.42V/cell => 14.52V",
-        "maxVoltage"       : 14.4,
-        "note_current"     : "currents are per accu, the current feed in is halt the total, i.e. for 2 batteries", 
-        "whenCurrentAbove" : 3
-    },
-    "ChargerProtectionLowPriority" : {
-        "alarmLevel"       : 0,
-        "absMinCurrent"    : -15, 
-        "absMaxCurrent"    : 40,
-        "note_minVoltage"  : "2 lead accus in series => minVoltage >= 21V",
-        "minVoltage"       : 24,
-        "whenCurrentBelow" : 2,
-        "FIXME:": "minVoltage when current below must be there for several seconds!",
-        "note_maxVoltage"  : "2 lead accus in series => charge voltage can reach 36V",
-        "maxVoltage"       : 33,
-        "whenCurrentAbove" : 2
-    },
-    "ChargerProtectionHighPriority" : {
-        "alarmLevel"       : 2,
-        "absMinCurrent"    : -20, 
-        "absMaxCurrent"    : 45,
-        "note_minVoltage"  : "2 lead accus in series => minVoltage >= 21V",
-        "minVoltage"       : 23,
-        "whenCurrentBelow" : 2,
-        "note_maxVoltage"  : "2 lead accus in series => charge voltage can reach 36V",
-        "maxVoltage"       : 35,
-        "whenCurrentAbove" : 2
-    },
-    "ChargerLoadProtectionLowPriority" : {
-        "alarmLevel"       : 0,
-        "absMinCurrent"    : -15,
-        "absMaxCurrent"    : 1,
-        "note_whenCurrentBelow": "disabled",
-        "minVoltage"       : 24,
-        "whenCurrentBelow" : 0,
-        "maxVoltage"       : 27,
-        "whenCurrentAbove" : 13
-    },
-    "ChargerLoadProtectionHighPriority" : {
-        "alarmLevel"       : 2,
-        "absMinCurrent"    : -20, 
-        "absMaxCurrent"    : 1,
-        "minVoltage"       : 23,
-        "note_whenCurrentBelow": "disabled",
-        "whenCurrentBelow" : 0,
-        "note_maxVoltage"  : "Derived from max load power=20A*24V/29V",
-        "maxVoltage"       : 29,
-        "whenCurrentAbove" : 16.5
-    },
-    "ChargerOverheatProtectionHighPriority" : {
-        "note"             : "occassionally the charger decides to discharge the battery (I < 0), while V > maxVoltage",
-        "alarmLevel"       : 2,
-        "maxVoltage"       : 32,
-        "whenCurrentBelow" : -0.001
-    },
-
+    
     "Tracer" : {
         "note_interval_sec": "BMV delivers data every 2 sec",
         "interval_sec"     : 2,

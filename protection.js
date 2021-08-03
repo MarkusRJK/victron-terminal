@@ -15,6 +15,8 @@ const cGreen  = "\x1b[1m\x1b[32m";
 const cYellow = "\x1b[33m";
 const cReset  = "\x1b[0m";
 
+// FIXME: in all protection.js - make sure no unreported relay switching is done, i.e. must always log an alarm!!
+
 // singleton class Alarm
 // TODO: implement new policy:
 // low priority alarm:    alarm notification of possibly harmful state (no action)
@@ -131,7 +133,7 @@ class Alarm {
     //           last 5 min
     raise(id, alevel, failureText, actionText, eventTime) {
         logger.trace('Alarm::raise(' + id + ', ' + alevel + ')');
-        let now = new Date();
+        let now = Date.now();
         if (! eventTime) eventTime = now;
 
         let activeUnacknAlarms = this.alarmHistory.filter((a) => (a.isActive && !a.isAckn));
@@ -230,7 +232,7 @@ class Switcher {
         // lastCurrentTime = pvInput.latestCurrent();
         // logger.debug('lastcurrenttime: ' + new Date(lastCurrentTime).toTimeString());
 
-        // const now = new Date();
+        // const now = Date.now();
         // //console.log("sunset is in " + solarState.getSunset());
         // // approx 2 hours before sunset or before the current into 
         // // the battery becomes 0
@@ -281,14 +283,13 @@ class FlowProtection { // shall extends Switcher
         lastCurrentTime = pvInput.latestCurrent();
         logger.debug('lastcurrenttime: ' + new Date(lastCurrentTime).toTimeString());
 
-        const now = new Date();
         //console.log("sunset is in " + solarState.getSunset());
         // approx 2 hours before sunset or before the current into 
         // the battery becomes 0
         // FIXME: twoHousrTwentee can be removed once lastcurrenttime is properly calculated
         //        and working and the average load with relay on is known
         const twoHoursTwenteeInMS = 8400000; // (2 * 60 + 20) * 60 * 1000;
-        const timeTillNullChargeInMS = lastCurrentTime - now.getTime()
+        const timeTillNullChargeInMS = lastCurrentTime - Date.now()
               - twoHoursTwenteeInMS;
         logger.debug('timeTillNullChargeInMS: ' + new Date(timeTillNullChargeInMS).toTimeString());
         // FIXME: a timer will "get lost" if the server is restarted while 
@@ -303,7 +304,8 @@ class FlowProtection { // shall extends Switcher
         if (! flow) return; // on null and undefined return
         let I = flow.getCurrent();
         let U = flow.getVoltage();
-        if (U === 0) return; // there is no battery voltage of 0
+        if (!U) return; // there is no battery voltage of 0
+        if (I === null || typeof I === 'undefined') return
         let Istr = I.toFixed(2) + "A";
         let Ustr = U.toFixed(2) + "V";
 
@@ -357,13 +359,20 @@ class FlowProtection { // shall extends Switcher
 }
 
 class BatteryProtection extends Switcher {
-    constructor(actor) {
+    constructor(conf, actor) {
         super(actor);
-        this.minDiffForCharge = 1.0;
-        this.minAccuVoltage = 12.0;// FIXME: make configurable!!!
+        this.minDiffForCharge = conf.minDiffForCharge;
+        this.minAccuVoltage = conf.minAccuVoltage;
     };
 
     setVoltages(topVoltage, bottomVoltage, pvVoltage) {
+        return; // FIXME: temporary disabled as this will kick of the relay too often
+        // bases on minAccuVoltage for a couple of seconds on high load. This needs
+        // timing to be involved!!!
+        if (topVoltage === null || typeof topVoltage === 'undefined') return;
+        if (bottomVoltage === null || typeof bottomVoltage === 'undefined') return;
+        if (pvVoltage === null || typeof pvVoltage === 'undefined') return;
+
         // logger.debug('BatteryProtection: ' + topVoltage);
         // logger.debug('BatteryProtection: ' + bottomVoltage);
         // logger.debug('BatteryProtection: ' + pvVoltage);
@@ -423,7 +432,8 @@ class ChargerOverheatProtection {
         if (! flow) return; // on null and undefined return
         let I = flow.getCurrent();
         let U = flow.getVoltage();
-        if (U === 0) return; // there is no PV voltage of 0
+        if (! U) return; // there is no PV voltage of 0
+        if (I === null || typeof I === 'undefined') return;
         let Istr = String(I) + "A";
         let Ustr = String(U) + "V";
 
