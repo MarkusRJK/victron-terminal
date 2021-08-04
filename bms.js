@@ -14,7 +14,7 @@ const ECMeter = require( './meter' ).EnergyAndChargeMeter;
 const PVInputFromIrradianceML = require( './forecast' ).PVInputFromIrradianceML;
 var forecast = require( './forecast' );
 var cron = require('node-cron');
-var usage = require('./usage-statistic').HourlyUsageBuckets;
+const UsageBuckets = require('./usage-statistic').HourlyUsageBuckets;
 
 
 let mppt = new MPPTclient(0); // poking in intervals done below
@@ -80,7 +80,7 @@ class Flow {
     }
 
     getCurrent() {
-        //logger.debug('getCurrent: ' + this.actualCurrent);
+        logger.trace('getCurrent: ' + this.actualCurrent);
         return this.actualCurrent;
     }
 
@@ -96,7 +96,7 @@ class Flow {
     }
 
     getVoltage() {
-        //logger.debug('getVoltage: ' + this.actualVoltage);
+        logger.trace('getVoltage: ' + this.actualVoltage);
         return this.actualVoltage;
     }
 
@@ -811,15 +811,17 @@ class BMS extends VEdeviceSerialAccu {
         this.upperFloatC   = null;
 
         this.alarms = null;
-        this.bottomBattProtectionLP = null;
-        this.bottomBattProtectionHP = null;
-        this.topBattProtectionLP    = null;
-        this.topBattProtectionHP    = null;
-        this.chargerProtectionLP    = null;
-        this.chargerProtectionHP    = null;
-        this.chargerLoadProtectionLP = null;
-        this.chargerLoadProtectionHP = null;
+        this.bottomBattProtectionLP      = null;
+        this.bottomBattProtectionHP      = null;
+        this.topBattProtectionLP         = null;
+        this.topBattProtectionHP         = null;
+        this.chargerProtectionLP         = null;
+        this.chargerProtectionHP         = null;
+        this.chargerLoadProtectionLP     = null;
+        this.chargerLoadProtectionHP     = null;
         this.chargerOverheatProtectionHP = null;
+        this.usage                       = null;
+        this.baseUsage                   = null;
 
         this.tracerInterval = 2000;
         this.isMaster = 1;
@@ -854,27 +856,6 @@ class BMS extends VEdeviceSerialAccu {
 
         //this.lowerIncCapacity = new IntegralOverTime(this.bottomFlow.getCurrent());
         //this.upperIncCapacity = new IntegralOverTime(this.topFlow.getCurrent());
-
-        this.usage = new usage(14); // FIXME: read from config file
-        this.usageMeterId = ECMeter.setStart();
-        //this.baseUsage = new usage();
-
-        // schedule a write every full hour
-        //                                   ┌────────────── second (optional)
-        //                                   │ ┌──────────── minute
-        //                                   │ │ ┌────────── hour
-        //                                   │ │ │ ┌──────── day of month
-        //                                   │ │ │ │ ┌────── month
-        //                                   │ │ │ │ │ ┌──── day of week
-        //                                   │ │ │ │ │ │
-        //                                   │ │ │ │ │ │
-        this.writeUsageTask = cron.schedule('0 0 * * * *', () => {
-            logger.trace('cron: write usage, reset meter for next hour');
-            let thisHour = (new Date()).getHours();
-            if (thisHour === 0) this.usage.setNextDay();
-            this.usage.writeData();
-            ECMeter.setStart(this.usageMeterId);
-        });
 
         this.registerListener('ChangeList', this.processData.bind(this));
 
@@ -914,11 +895,10 @@ class BMS extends VEdeviceSerialAccu {
         ECMeter.terminate(); // write out meter data
 
         this.writeUsageTask.stop();
-        //this.switchTask.stop();
         // FIXME: destroy() errors although api says that tasks have destroy()
         //this.writeTask.destroy(); 
-        //this.switchTask.destroy(); 
-        this.usage.terminate();
+        if (this.usage)     this.usage.terminate();
+        if (this.baseUsage) this.usage.terminate();
     }
 
 
@@ -932,59 +912,198 @@ class BMS extends VEdeviceSerialAccu {
     
     readConfig(filename) {
         logger.trace("BMS::readConfig");
-        if (this.appConfig !== null) return;
+        if (this.appConfig !== null) return; // appConfig read before
         // read config file
-        // TODO: use promise
-        let data = fs.readFileSync(filename, 'utf8');
+        try {
+            let data = fs.readFileSync(filename, 'utf8');
 
-        logger.debug("BMS:: Parse configuration (JSON format)");
-        // TODO: protect against non-defined values => defaults
-        this.appConfig = JSON.parse(data);
+            logger.debug(`BMS::readConfig - Parse ${filename} configuration (JSON format)`);
+            this.appConfig = JSON.parse(data);
+            if (! this.appConfig)
+                throw 'BMS::readConfig - no configuration found';
+        }
+        catch (err) {
+            logger.error(`Cannot read: ${filename} (${err.code === 'ENOENT' ? 'does not exist' : 'is not readable'})`);
+        }
 
-        let fc = this.appConfig.floatcharge;
+        this.readChargingConfig();
+        this.readAlarmsConfig();
+        this.readUsageConfig();
+        this.readProtectionConfig();
+        this.readTracerConfig();
+        this.readOpenWeatherConfig();
+    }
+
+    readChargingConfig() {
+        let c = null;
+        if ('Charging' in this.appConfig) {
+            logger.info("BMS::readChargingConfig - reading Charging");
+            c = this.appConfig['Charging'];
+        } else throw 'BMS::readChargingConfig - no charge characteristics defined';
+
+        let fc = null;
+        if ('floatcharge' in c) {
+            logger.info("BMS::readChargingConfig - reading floatcharge");
+            fc = c['floatcharge'];
+        } else throw 'BMS::readChargingConfig - no floatcharge characteristics defined';
 
         // The measured Voltage in this process nominal 12 V for the upper and nominal 12 V
         // for the lower pack. The measured current splits across all accumulators, the
         // 2 lower and 2 upper, i.e. across 800 Ah.
         this.lowerFloatC   = new FloatChargeCharacteristic(fc, 6, 400); //this.accumulator.getNominalCapacity());
         this.upperFloatC   = new FloatChargeCharacteristic(fc, 6, 400); //this.accumulator.getNominalCapacity());
-        let rc = this.appConfig.restingCharge;
+        
+        let rc = null;
+        if ('restingCharge' in c) {
+            logger.info("BMS::readChargingConfig - reading restingCharge");
+            rc = c['restingCharge'];
+        } else throw 'BMS::readChargingConfig - no restingCharge characteristics defined';
+
         this.lowerRestingC = new RestingCharacteristic(rc);
         this.upperRestingC = new RestingCharacteristic(rc);
         // FIXME: temporary use RestingChara. until DischargeChar is defined
         this.lowerDischargeC = new RestingCharacteristic(rc);  
         this.upperDischargeC = new RestingCharacteristic(rc);
+    }
+
+    // \pre this.appConfig.Alarms exists
+    readAlarmsConfig() {
+        let a = null;
+        if ('Alarms' in this.appConfig) {
+            logger.info("BMS::readAlarmsConfig - reading Alarms");
+            a = this.appConfig['Alarms'];
+        } else logger.warn("BMS::readAlarmsConfig - no Alarms section defined - using defaults");
+        let h = 20; // default
+        if (a && 'history' in a) h = a['history'];
+        else logger.warn(`BMS::readAlarmsConfig - no Alarms history defined - using default ${h}`);
+        let sInMin = 5; // default
+        if (a && 'silenceInMin' in a) sInMin = a['silenceInMin'];
+        else logger.warn(`BMS::readAlarmsConfig - no Alarms silenceInMin defined - using default ${sInMin}`);
 
         // Protection and alarms - must be created before registerListener
-        this.alarms = new Alarm(this.appConfig.Alarms.history, this.appConfig.Alarms.silenceInMin);
-        logger.debug('this.appConfig has Protection: ' + ('Protection' in this.appConfig));
-        let protection = this.appConfig.Protection;
-        this.batteryProtection = new BatteryProtection(protection.BatteryProtection, this);
-        this.bottomBattProtectionLP = new FlowProtection(0, 'Bottom battery' , protection.BatteryProtectionLowPriority, this.alarms, this);
-        this.bottomBattProtectionHP = new FlowProtection(1, 'Bottom battery' , protection.BatteryProtectionHighPriority, this.alarms, this);
-        this.topBattProtectionLP    = new FlowProtection(2, 'Top battery' , protection.BatteryProtectionLowPriority, this.alarms, this);
-        this.topBattProtectionHP    = new FlowProtection(3, 'Top battery' , protection.BatteryProtectionHighPriority, this.alarms, this);
-        this.chargerProtectionLP = new FlowProtection(4, 'Charger' , protection.ChargerProtectionLowPriority, this.alarms, this);
-        this.chargerProtectionHP = new FlowProtection(5, 'Charger' , protection.ChargerProtectionHighPriority, this.alarms, this);
-        this.chargerLoadProtectionLP = new FlowProtection(6, 'Charger load' , protection.ChargerLoadProtectionLowPriority, this.alarms, this);
-        this.chargerLoadProtectionHP = new FlowProtection(7, 'Charger load' , protection.ChargerLoadProtectionHighPriority, this.alarms, this);
-        this.chargerOverheatProtectionHP = new ChargerOverheatProtection(8, 'Charger Overheat' , protection.ChargerOverheatProtectionHighPriority, this.alarms, this);
+        this.alarms = new Alarm(h, sInMin);
+    }
 
+    readUsageConfig() {
+        // FIXME: protect against usage config mismatch with stored usage JSON file
+        //        i.e. what if JSON has history n != appConfig.history
+        let u = null;
+        if ('Usage' in this.appConfig) {
+            logger.info("BMS::readUsageConfig - reading Usage");
+            u = this.appConfig['Usage'];
+        } else logger.warn("BMS::readUsageConfig - no Usage section defined - using defaults");
+        let h = 14; // days - default
+        if (u && 'history' in u) h = u['history'];
+        else logger.warn(`BMS::readUsageConfig - no Usage history defined - using default ${h}`);
+        
+        const f1 = __dirname + '/usage.json';
+        const f2 = __dirname + '/baseUsage.json';
+        this.usage     = new UsageBuckets(h, f1);
+        this.baseUsage = new UsageBuckets(h, f2);
+        this.usageMeterId = ECMeter.setStart();
+
+        // bind(this) with cron.schedule function fails
+        // schedule a write every full hour
+        //                                   ┌────────────── second (optional)
+        //                                   │ ┌──────────── minute
+        //                                   │ │ ┌────────── hour
+        //                                   │ │ │ ┌──────── day of month
+        //                                   │ │ │ │ ┌────── month
+        //                                   │ │ │ │ │ ┌──── day of week
+        //                                   │ │ │ │ │ │
+        //                                   │ │ │ │ │ │
+        this.writeUsageTask = cron.schedule('0 0 * * * *', (() => {
+            logger.debug('cron: write usage, reset meter for next hour');
+            let uObj = this.usage;
+            let buObj = this.baseUsage;
+            let thisHour = (new Date()).getHours();
+            logger.debug('cron: current hour ' + thisHour);
+            if (!uObj || ! buObj) {
+                logger.warn('cron: No usage, baseUsage exists');
+                return;
+            }
+            if (thisHour === 0) {
+                logger.info('cron: set next day');
+                uObj.setNextDay();
+                buObj.setNextDay();
+            };
+            uObj.writeData();
+            buObj.writeData();
+            ECMeter.setStart(this.usageMeterId);
+        }).bind(this));
+    }
+
+    readProtectionConfig() {
+        let p = null;
+        if ('Protection' in this.appConfig) {
+            logger.info("BMS::readProtectionConfig - reading Protection");
+            p = this.appConfig['Protection'];
+        } else throw 'BMS::readProtectionConfig - no Protection section defined';
+        
+        if ('BatteryProtection' in p)
+            this.batteryProtection = new BatteryProtection(p.BatteryProtection, this);
+        else throw 'BMS::readProtectionConfig - no BatteryProtection section defined';
+
+        if ('BatteryProtectionLowPriority' in p) {
+            this.bottomBattProtectionLP = new FlowProtection(0, 'Bottom battery' , p.BatteryProtectionLowPriority, this.alarms, this);
+            this.topBattProtectionLP    = new FlowProtection(2, 'Top battery' , p.BatteryProtectionLowPriority, this.alarms, this);
+        }
+        else throw 'BMS::readProtectionConfig - no BatteryProtectionLowPriority section defined';
+        
+        if ('BatteryProtectionHighPriority' in p) {
+            this.bottomBattProtectionHP = new FlowProtection(1, 'Bottom battery' , p.BatteryProtectionHighPriority, this.alarms, this);
+            this.topBattProtectionHP    = new FlowProtection(3, 'Top battery' , p.BatteryProtectionHighPriority, this.alarms, this);
+        }
+        else throw 'BMS::readProtectionConfig - no BatteryProtectionHighPriority section defined';
+
+        if ('ChargerProtectionLowPriority' in p)
+            this.chargerProtectionLP = new FlowProtection(4, 'Charger' , p.ChargerProtectionLowPriority, this.alarms, this);
+        else throw 'BMS::readProtectionConfig - no ChargerProtectionLowPriority section defined';
+
+        if ('ChargerProtectionHighPriority' in p)
+            this.chargerProtectionHP = new FlowProtection(5, 'Charger' , p.ChargerProtectionHighPriority, this.alarms, this);
+        else throw 'BMS::readProtectionConfig - no ChargerProtectionHighPriority section defined';
+
+        if ('ChargerLoadProtectionLowPriority' in p)
+            this.chargerLoadProtectionLP = new FlowProtection(6, 'Charger load' , p.ChargerLoadProtectionLowPriority, this.alarms, this);
+        else throw 'BMS::readProtectionConfig - no ChargerLoadProtectionLowPriority section defined';
+
+        if ('ChargerLoadProtectionHighPriority' in p)
+            this.chargerLoadProtectionHP = new FlowProtection(7, 'Charger load' , p.ChargerLoadProtectionHighPriority, this.alarms, this);
+        else throw 'BMS::readProtectionConfig - no ChargerLoadProtectionHighPriority section defined';
+
+        if ('ChargerOverheatProtectionHighPriority' in p)
+            this.chargerOverheatProtectionHP = new ChargerOverheatProtection(8, 'Charger Overheat' , p.ChargerOverheatProtectionHighPriority, this.alarms, this);
+        else throw 'BMS::readProtectionConfig - no ChargerOverheatProtectionHighPriority section defined';
+    }
+
+    readTracerConfig() {
+        let t = null;
         if ('Tracer' in this.appConfig) {
-            if ('interval_sec' in this.appConfig.Tracer)
-                this.tracerInterval = this.appConfig.Tracer.interval_sec * 1000;
-            if ('isMaster' in this.appConfig.Tracer)
-                this.isMaster = this.appConfig.Tracer.isMaster;
-        }
+            logger.info("BMS::readTracerConfig - reading Tracer");
+            t = this.appConfig['Tracer'];
+        } else throw 'BMS::readTracerConfig - no Tracer section defined';
 
+        this.tracerInterval = 2000;
+        if ('interval_sec' in t)
+            this.tracerInterval = t.interval_sec * 1000;
+        else logger.warn(`BMS::readTracerConfig - no Tracer interval_sec defined - using default ${this.tracerInterval}`);
+
+        if ('isMaster' in t)
+            this.isMaster = t.isMaster;
+        else throw 'BMS::readTracerConfig - no Tracer isMaster defined';
+    }
+
+    readOpenWeatherConfig() {
+        let w = null;
         if ('openWeatherAPI' in this.appConfig) {
-            let apiKey = this.appConfig.openWeatherAPI.key;
-            let lat    = this.appConfig.openWeatherAPI.latitude;
-            let lon    = this.appConfig.openWeatherAPI.longitude;
+            logger.info("BMS::readOpenWeatherConfig - reading openWeatherAPI");
+            w = this.appConfig['openWeatherAPI'];
+        } else throw 'BMS::readOpenWeatherConfig - no openWeatherAPI section defined';
 
-            this.pvInput = new PVInputFromIrradianceML(ECMeter, lat, lon, apiKey);
-        }
-        else throw 'OpenWeather configuration missing';
+        if ('key' in w && 'latitude' in w && 'longitude' in w)
+            this.pvInput = new PVInputFromIrradianceML(ECMeter, w.latitude, w.longitude, w.key);
+        else throw 'BMS::readOpenWeatherConfig - key, latitude and longitude mandatory';
     }
 
     protectFlows(time) {
@@ -1081,7 +1200,7 @@ class BMS extends VEdeviceSerialAccu {
     }
 
     processData(changedMap, timeStamp) {
-        logger.trace('BMS::processData');
+        logger.debug('BMS::processData');
         // FIXME: try catch to determine "Assignment to const variable"
         try {
             this.setFlows(changedMap, timeStamp);
@@ -1126,13 +1245,23 @@ class BMS extends VEdeviceSerialAccu {
             }
         }
         catch(err) {
-            logger.error('pvInput.setFlow failed: ' + err);
+            logger.error('pvInput.setFlow or pvInput.setTemp failed: ' + err);
         }
 
         const hour = new Date(timeStamp).getHours();
-        // this.getEDirectUse(index) + this.getEDrawn(index);
-        this.usage.logUsage(hour, ECMeter.getEUsed(this.usageMeterId));
-        //this.baseUsage.logUsage(hour, ECMeter.getEUsed(meterId));
+        try {
+            // this.getEDirectUse(index) + this.getEDrawn(index);
+            let use = ECMeter.getEUsed(this.usageMeterId);
+            // FIXME: EUsed is occacsionally negative, should not be so!!!
+            if (this.usage)
+                this.usage.logUsage(hour, use);
+            use = ECMeter.getELowVoltUse(this.usageMeterId);
+            if (this.baseUsage)
+                this.baseUsage.logUsage(hour, use);
+        }
+        catch(err) {
+            logger.error('logUsage in usage or baseUsage failed: ' + err);
+        }
 
         try {
             this.batteryProtection.setVoltages(this.topFlow.getVoltage(),
@@ -1142,6 +1271,7 @@ class BMS extends VEdeviceSerialAccu {
         catch(err) {
             logger.error('batteryProtection failed: ' + err);
         }
+
     }
 
     setAccuChainVoltage(newVoltage, oldVoltage, timeStamp, key) {

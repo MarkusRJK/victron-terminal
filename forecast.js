@@ -110,7 +110,7 @@ class PVInputFromIrradianceML {
     }
 
     copyWeatherData() {
-        logger.debug('PVInputFromIrradianceML::copyWeatherData');
+        logger.trace('PVInputFromIrradianceML::copyWeatherData');
         this.requestTime = weather.current.dt * 1000;
 
         // sunrise is the sunrise of the current day (i.e. not the next day)
@@ -129,7 +129,7 @@ class PVInputFromIrradianceML {
         let weatherClock = weather.current.dt * 1000;
         let pcClock = new Date(); // current PC time and date
         this.remoteToPCclk = pcClock - weatherClock;
-        logger.debug('PVInputFromIrradianceML::setRemoteToPCdiffTime is ' + this.remoteToPCclk);
+        logger.trace('PVInputFromIrradianceML::setRemoteToPCdiffTime is ' + this.remoteToPCclk);
     }
 
     // linear transformation to map the time between sunrise and sunset to [0; PI]
@@ -160,7 +160,7 @@ class PVInputFromIrradianceML {
     }
 
     persist(meterId) {
-        logger.debug('PVInputFromIrradianceML::persist - writing data to CSV file');
+        logger.info('PVInputFromIrradianceML::persist - writing data to CSV file');
         // write data to CSV: time, nominalI, nominalP
         let t = new Date(this.forecastStartTime).toTimeString().substring(0,8);
 
@@ -259,7 +259,7 @@ class PVInputFromIrradianceML {
             if(error){
                 logger.error('ERROR:', error);
             } else {
-                logger.debug('body:', body);
+                //logger.debug('body:', body);
                 try {       
                     // if the parse fails, weather will remain with the old data
                     weather = JSON.parse(body);
