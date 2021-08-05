@@ -5,7 +5,7 @@ const interpolate = require('everpolate').linear;
 var fs = require('fs');
 const Math = require('mathjs');
 const MPPTclient = require('tracer').MPPTDataClient;
-const Alarm = require('./protection.js').Alarm;
+const Alarms = require('./alarms').Alarms;
 const FlowProtection = require('./protection.js').FlowProtection;
 const BatteryProtection = require('./protection.js').BatteryProtection;
 const ChargerOverheatProtection = require('./protection.js').ChargerOverheatProtection;
@@ -809,7 +809,7 @@ class BMS extends VEdeviceSerialAccu {
         this.lowerFloatC   = null;
         this.upperFloatC   = null;
 
-        this.alarms = null;
+        this.alarms                      = null;
         this.bottomBattProtectionLP      = null;
         this.bottomBattProtectionHP      = null;
         this.topBattProtectionLP         = null;
@@ -920,7 +920,8 @@ class BMS extends VEdeviceSerialAccu {
         }
 
         this.readChargingConfig();
-        this.readAlarmsConfig();
+        this.alarms = new Alarms();
+        this.alarms.parseConfig(this.appConfig);
         this.usageBuckets = new UsageBuckets();
         this.usageBuckets.parseConfig(this.appConfig);
         this.readProtectionConfig();
@@ -960,24 +961,6 @@ class BMS extends VEdeviceSerialAccu {
         this.upperDischargeC = new RestingCharacteristic(rc);
     }
 
-    // \pre this.appConfig.Alarms exists
-    readAlarmsConfig() {
-        let a = null;
-        if ('Alarms' in this.appConfig) {
-            logger.info("BMS::readAlarmsConfig - reading Alarms");
-            a = this.appConfig['Alarms'];
-        } else logger.warn("BMS::readAlarmsConfig - no Alarms section defined - using defaults");
-        let h = 20; // default
-        if (a && 'history' in a) h = a['history'];
-        else logger.warn(`BMS::readAlarmsConfig - no Alarms history defined - using default ${h}`);
-        let sInMin = 5; // default
-        if (a && 'silenceInMin' in a) sInMin = a['silenceInMin'];
-        else logger.warn(`BMS::readAlarmsConfig - no Alarms silenceInMin defined - using default ${sInMin}`);
-
-        // Protection and alarms - must be created before registerListener
-        this.alarms = new Alarm(h, sInMin);
-    }
-
     readProtectionConfig() {
         let p = null;
         if ('Protection' in this.appConfig) {
@@ -990,35 +973,35 @@ class BMS extends VEdeviceSerialAccu {
         else throw 'BMS::readProtectionConfig - no BatteryProtection section defined';
 
         if ('BatteryProtectionLowPriority' in p) {
-            this.bottomBattProtectionLP = new FlowProtection(0, 'Bottom battery' , p.BatteryProtectionLowPriority, this.alarms, this);
-            this.topBattProtectionLP    = new FlowProtection(2, 'Top battery' , p.BatteryProtectionLowPriority, this.alarms, this);
+            this.bottomBattProtectionLP = new FlowProtection(0, 'Bottom battery' , p.BatteryProtectionLowPriority, this);
+            this.topBattProtectionLP    = new FlowProtection(2, 'Top battery' , p.BatteryProtectionLowPriority, this);
         }
         else throw 'BMS::readProtectionConfig - no BatteryProtectionLowPriority section defined';
         
         if ('BatteryProtectionHighPriority' in p) {
-            this.bottomBattProtectionHP = new FlowProtection(1, 'Bottom battery' , p.BatteryProtectionHighPriority, this.alarms, this);
-            this.topBattProtectionHP    = new FlowProtection(3, 'Top battery' , p.BatteryProtectionHighPriority, this.alarms, this);
+            this.bottomBattProtectionHP = new FlowProtection(1, 'Bottom battery' , p.BatteryProtectionHighPriority, this);
+            this.topBattProtectionHP    = new FlowProtection(3, 'Top battery' , p.BatteryProtectionHighPriority, this);
         }
         else throw 'BMS::readProtectionConfig - no BatteryProtectionHighPriority section defined';
 
         if ('ChargerProtectionLowPriority' in p)
-            this.chargerProtectionLP = new FlowProtection(4, 'Charger' , p.ChargerProtectionLowPriority, this.alarms, this);
+            this.chargerProtectionLP = new FlowProtection(4, 'Charger' , p.ChargerProtectionLowPriority, this);
         else throw 'BMS::readProtectionConfig - no ChargerProtectionLowPriority section defined';
 
         if ('ChargerProtectionHighPriority' in p)
-            this.chargerProtectionHP = new FlowProtection(5, 'Charger' , p.ChargerProtectionHighPriority, this.alarms, this);
+            this.chargerProtectionHP = new FlowProtection(5, 'Charger' , p.ChargerProtectionHighPriority, this);
         else throw 'BMS::readProtectionConfig - no ChargerProtectionHighPriority section defined';
 
         if ('ChargerLoadProtectionLowPriority' in p)
-            this.chargerLoadProtectionLP = new FlowProtection(6, 'Charger load' , p.ChargerLoadProtectionLowPriority, this.alarms, this);
+            this.chargerLoadProtectionLP = new FlowProtection(6, 'Charger load' , p.ChargerLoadProtectionLowPriority, this);
         else throw 'BMS::readProtectionConfig - no ChargerLoadProtectionLowPriority section defined';
 
         if ('ChargerLoadProtectionHighPriority' in p)
-            this.chargerLoadProtectionHP = new FlowProtection(7, 'Charger load' , p.ChargerLoadProtectionHighPriority, this.alarms, this);
+            this.chargerLoadProtectionHP = new FlowProtection(7, 'Charger load' , p.ChargerLoadProtectionHighPriority, this);
         else throw 'BMS::readProtectionConfig - no ChargerLoadProtectionHighPriority section defined';
 
         if ('ChargerOverheatProtectionHighPriority' in p)
-            this.chargerOverheatProtectionHP = new ChargerOverheatProtection(8, 'Charger Overheat' , p.ChargerOverheatProtectionHighPriority, this.alarms, this);
+            this.chargerOverheatProtectionHP = new ChargerOverheatProtection(8, 'Charger Overheat' , p.ChargerOverheatProtectionHighPriority, this);
         else throw 'BMS::readProtectionConfig - no ChargerOverheatProtectionHighPriority section defined';
     }
 

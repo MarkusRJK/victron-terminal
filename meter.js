@@ -139,7 +139,6 @@ class EnergyAndChargeMeter extends Meter {
         let timeDiff = time - this.lastTime;
         
         // E = Energy
-        let C = this.IBat * timeDiff;
         this.meter.EWMs.lowVoltUse += -this.UBat * this.ILoad * timeDiff;
         // logger.debug(this.IBat + ' ' + this.UBat  + ' ' + this.IPv +
         //           ' ' + this.UPv + ' ' +
@@ -181,27 +180,26 @@ class EnergyAndChargeMeter extends Meter {
         // <= 0 && on:     IPv             0         IBat   0                UBat * IBat
         // > 0  && off:    min(IPv,ILoad)  IBat      0      (UPv-UBat)*IBat  UBat * IBat
         // > 0  && on:     IPv-IBat        IBat      0      (UPv-UBat)*IBat  UBat * IBat
+        let C = this.IBat * timeDiff;
+        let IBat = this.IBat;
         if (this.IBat > 0) { // charging
             // FIXME: for correct metering determine whether ILoad is contained in IPv?
             //        it appears IPv = ILoad + IBat (no load on battery), load is negative!!!
-            if (this.RState === 'ON')
-                this.meter.EWMs.directUse += this.UBat * (this.IPv - this.IBat) * timeDiff;
-            else
-                this.meter.EWMs.directUse += this.UBat * Math.min(this.IPv,-this.ILoad) * timeDiff;
             this.meter.CAMs.absorbed      += C;
             this.meter.EWMs.absorbed      += this.UBat * C;
             // IBat > 0 => UPv >= UBat
             this.meter.EWMs.loss1         += Math.max(0, this.UPv - this.UBat) * C;
             this.meter.EWMs.loss2         += this.UBat * C;
         } else {
-            if (this.RState === 'ON')
-                this.meter.EWMs.directUse += this.UBat * this.IPv * timeDiff;
-            else
-                this.meter.EWMs.directUse += this.UBat * Math.min(this.IPv,-this.ILoad) * timeDiff;
+            IBat = 0;
             this.meter.CAMs.drawn         += -C; // drawn ampere hours / convMsToH
             this.meter.EWMs.drawn         += -this.UBat * C; // drawn energy / convMsToH
             this.meter.EWMs.loss2         += -this.UBat * C;
         }
+        if (this.RState === 'ON')
+            this.meter.EWMs.directUse += this.UBat * (this.IPv - IBat) * timeDiff;
+        else
+            this.meter.EWMs.directUse += this.UBat * Math.min(this.IPv,-this.ILoad) * timeDiff;
         // logger.debug(this.meter.EWMs.directUse + ' ' + this.meter.EWMs.absorbed  + ' ' + this.meter.EWMs.drawn +
         //           ' ' + this.meter.EWMs.loss1 + ' ' + this.meter.EWMs.loss2 + ' ' +
         //           this.meter.CAMs.absorbed  + ' ' + this.meter.CAMs.drawn);

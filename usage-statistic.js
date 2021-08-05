@@ -134,6 +134,7 @@ class HourlyUsageBuckets {
     logUsage(timeStamp) {
         logger.trace('HourlyUsageBuckets::logUsage');
         const hour = new Date(timeStamp).getHours();
+        // FIXME: ELowVoltUse > EUsed when relay is OFF although  - how should it actually be? Equal?
         if (this.usage)
             this.usage.logValue(hour, ECMeter.getEUsed(this.usageMeterId));
         if (this.baseUsage)
