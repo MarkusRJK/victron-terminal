@@ -13,7 +13,6 @@ var log4js = require('log4js');
 const ECMeter = require( './meter' ).EnergyAndChargeMeter;
 const PVInputFromIrradianceML = require( './forecast' ).PVInputFromIrradianceML;
 var forecast = require( './forecast' );
-var cron = require('node-cron');
 const UsageBuckets = require('./usage-statistic').HourlyUsageBuckets;
 
 
@@ -820,8 +819,7 @@ class BMS extends VEdeviceSerialAccu {
         this.chargerLoadProtectionLP     = null;
         this.chargerLoadProtectionHP     = null;
         this.chargerOverheatProtectionHP = null;
-        this.usage                       = null;
-        this.baseUsage                   = null;
+        this.usageBuckets                = null;
 
         this.tracerInterval = 2000;
         this.isMaster = 1;
@@ -894,13 +892,8 @@ class BMS extends VEdeviceSerialAccu {
 
         ECMeter.terminate(); // write out meter data
 
-        this.writeUsageTask.stop();
-        // FIXME: destroy() errors although api says that tasks have destroy()
-        //this.writeTask.destroy(); 
-        if (this.usage)     this.usage.terminate();
-        if (this.baseUsage) this.usage.terminate();
+        if (this.usageBuckets) this.usageBuckets.terminate();
     }
-
 
     hideBMVdisplayParams() {
         // hide 'useless' parameters in BMV display
@@ -928,7 +921,8 @@ class BMS extends VEdeviceSerialAccu {
 
         this.readChargingConfig();
         this.readAlarmsConfig();
-        this.readUsageConfig();
+        this.usageBuckets = new UsageBuckets();
+        this.usageBuckets.parseConfig(this.appConfig);
         this.readProtectionConfig();
         this.readTracerConfig();
         this.readOpenWeatherConfig();
@@ -982,55 +976,6 @@ class BMS extends VEdeviceSerialAccu {
 
         // Protection and alarms - must be created before registerListener
         this.alarms = new Alarm(h, sInMin);
-    }
-
-    readUsageConfig() {
-        // FIXME: protect against usage config mismatch with stored usage JSON file
-        //        i.e. what if JSON has history n != appConfig.history
-        let u = null;
-        if ('Usage' in this.appConfig) {
-            logger.info("BMS::readUsageConfig - reading Usage");
-            u = this.appConfig['Usage'];
-        } else logger.warn("BMS::readUsageConfig - no Usage section defined - using defaults");
-        let h = 14; // days - default
-        if (u && 'history' in u) h = u['history'];
-        else logger.warn(`BMS::readUsageConfig - no Usage history defined - using default ${h}`);
-        
-        const f1 = __dirname + '/usage.json';
-        const f2 = __dirname + '/baseUsage.json';
-        this.usage     = new UsageBuckets(h, f1);
-        this.baseUsage = new UsageBuckets(h, f2);
-        this.usageMeterId = ECMeter.setStart();
-
-        // bind(this) with cron.schedule function fails
-        // schedule a write every full hour
-        //                                   ┌────────────── second (optional)
-        //                                   │ ┌──────────── minute
-        //                                   │ │ ┌────────── hour
-        //                                   │ │ │ ┌──────── day of month
-        //                                   │ │ │ │ ┌────── month
-        //                                   │ │ │ │ │ ┌──── day of week
-        //                                   │ │ │ │ │ │
-        //                                   │ │ │ │ │ │
-        this.writeUsageTask = cron.schedule('0 0 * * * *', (() => {
-            logger.debug('cron: write usage, reset meter for next hour');
-            let uObj = this.usage;
-            let buObj = this.baseUsage;
-            let thisHour = (new Date()).getHours();
-            logger.debug('cron: current hour ' + thisHour);
-            if (!uObj || ! buObj) {
-                logger.warn('cron: No usage, baseUsage exists');
-                return;
-            }
-            if (thisHour === 0) {
-                logger.info('cron: set next day');
-                uObj.setNextDay();
-                buObj.setNextDay();
-            };
-            uObj.writeData();
-            buObj.writeData();
-            ECMeter.setStart(this.usageMeterId);
-        }).bind(this));
     }
 
     readProtectionConfig() {
@@ -1200,7 +1145,7 @@ class BMS extends VEdeviceSerialAccu {
     }
 
     processData(changedMap, timeStamp) {
-        logger.debug('BMS::processData');
+        logger.trace('BMS::processData');
         // FIXME: try catch to determine "Assignment to const variable"
         try {
             this.setFlows(changedMap, timeStamp);
@@ -1248,16 +1193,10 @@ class BMS extends VEdeviceSerialAccu {
             logger.error('pvInput.setFlow or pvInput.setTemp failed: ' + err);
         }
 
-        const hour = new Date(timeStamp).getHours();
         try {
             // this.getEDirectUse(index) + this.getEDrawn(index);
-            let use = ECMeter.getEUsed(this.usageMeterId);
-            // FIXME: EUsed is occacsionally negative, should not be so!!!
-            if (this.usage)
-                this.usage.logUsage(hour, use);
-            use = ECMeter.getELowVoltUse(this.usageMeterId);
-            if (this.baseUsage)
-                this.baseUsage.logUsage(hour, use);
+            if (this.usageBuckets)
+                this.usageBuckets.logUsage(timeStamp);
         }
         catch(err) {
             logger.error('logUsage in usage or baseUsage failed: ' + err);

@@ -215,6 +215,8 @@ class EnergyAndChargeMeter extends Meter {
         let subtract = 0;
         if (typeof index !== 'undefined' && index !== null &&
             (this.MeterStarts.has(index))) subtract = this.MeterStarts.get(index).EWMs.directUse;
+        else if (typeof index !== 'undefined')
+            logger.fatal('EnergyAndChargeMeter has no index ' + index);
 
         let directUseLastMinutes = 0;
         let IBat = (this.IBat > 0 ? this.IBat : 0);
@@ -231,7 +233,8 @@ class EnergyAndChargeMeter extends Meter {
         let subtract = 0;
         if (typeof index !== 'undefined' && index !== null &&
             (this.MeterStarts.has(index))) subtract = this.MeterStarts.get(index).EWMs.lowVoltUse;
-        else logger.fatal('ELowVoltUse has no index ' + index);
+        else if (typeof index !== 'undefined')
+            logger.fatal('EnergyAndChargeMeter has no index ' + index);
                           
         let usedLastMinutes = -this.UBat * this.ILoad * timeDiff;
         return (this.meter.EWMs.lowVoltUse - subtract + usedLastMinutes) * convMsToH;
@@ -241,6 +244,8 @@ class EnergyAndChargeMeter extends Meter {
         let subtract = 0;
         if (typeof index !== 'undefined' && index !== null &&
             (this.MeterStarts.has(index))) subtract = this.MeterStarts.get(index).EWMs.absorbed;
+        else if (typeof index !== 'undefined')
+            logger.fatal('EnergyAndChargeMeter has no index ' + index);
 
         let absorbedLastMinutes = 0;
         if (this.IBat > 0) absorbedLastMinutes = this.UBat * this.IBat * timeDiff;
@@ -251,6 +256,8 @@ class EnergyAndChargeMeter extends Meter {
         let subtract = 0;
         if (typeof index !== 'undefined' && index !== null &&
             (this.MeterStarts.has(index))) subtract = this.MeterStarts.get(index).EWMs.drawn;
+        else if (typeof index !== 'undefined')
+            logger.fatal('EnergyAndChargeMeter has no index ' + index);
 
         let drawnLastMinutes = 0;
         if (this.IBat < 0) drawnLastMinutes = -this.UBat * this.IBat * timeDiff;
@@ -283,6 +290,8 @@ class EnergyAndChargeMeter extends Meter {
         let subtract = 0;
         if (typeof index !== 'undefined' && index !== null &&
             (this.MeterStarts.has(index))) subtract = this.MeterStarts.get(index).EWMs.loss1;
+        else if (typeof index !== 'undefined')
+            logger.fatal('EnergyAndChargeMeter has no index ' + index);
 
         let lossLastMinutes = 0;
         if (this.IBat > 0) lossLastMinutes = Math.max(0, this.UPv - this.UBat) * this.IBat * timeDiff;
@@ -293,6 +302,8 @@ class EnergyAndChargeMeter extends Meter {
         let subtract = 0;
         if (typeof index !== 'undefined' && index !== null &&
             (this.MeterStarts.has(index))) subtract = this.MeterStarts.get(index).EWMs.loss2;
+        else if (typeof index !== 'undefined')
+            logger.fatal('EnergyAndChargeMeter has no index ' + index);
 
         let lossLastMinutes = this.UBat * this.IBat * timeDiff;
         return (this.meter.EWMs.loss2 - subtract + lossLastMinutes) * convMsToH;
@@ -303,6 +314,8 @@ class EnergyAndChargeMeter extends Meter {
         let subtract = 0;
         if (typeof index !== 'undefined' && index !== null &&
             (this.MeterStarts.has(index))) subtract = this.MeterStarts.get(index).CAMs.absorbed;
+        else if (typeof index !== 'undefined')
+            logger.fatal('EnergyAndChargeMeter has no index ' + index);
 
         let absorbedLastMinutes = 0;
         if (this.IBat > 0) absorbedLastMinutes = this.IBat * timeDiff;
@@ -313,6 +326,8 @@ class EnergyAndChargeMeter extends Meter {
         let subtract = 0;
         if (typeof index !== 'undefined' && index !== null &&
             (this.MeterStarts.has(index))) subtract = this.MeterStarts.get(index).CAMs.drawn;
+        else if (typeof index !== 'undefined')
+            logger.fatal('EnergyAndChargeMeter has no index ' + index);
 
         let drawnLastMinutes = 0;
         if (this.IBat < 0) drawnLastMinutes =  -this.IBat * timeDiff; 
