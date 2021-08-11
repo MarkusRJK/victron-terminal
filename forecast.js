@@ -61,13 +61,25 @@ class PVInputFromIrradianceML {
             this.temp = 0;
             this.AvgTemperature = 0;
             this.lastTime = 0;
-            this.sunrise = 0;
             this.earliestTimeOfCurrent = 0;
-            this.sunset = 0;
             this.latestTimeOfCurrent = 0;
+
+            // weather data:
+            this.requestTime = 0;
+            this.sunrise = 0;
+            this.sunset = 0;
+            this.forecastStartTime = 0;
+            // percentage of clouds over time and area
+            this.pcClouds = 0;
+            // Probability of Precipitation (PoP):
+            this.pcOfPerc = 0;
+            // mm of rain in 1 hour is an indicator of the height and thickness of the clouds
+            this.rainInMM = 0;
+
             this.remoteToPCclk = 0;
             this.meter = meter;
             this.EDirectNormal      = 0; // needs to be multiplied with (1-clouds)
+            this.EConst             = 0; // needs to be multiplied with clouds
             this.EDiffuseHorizontal = 0; // needs to be multiplied with clouds
             this.nextForecastTimer = null;
             this.hourlyTimer = null;
@@ -76,9 +88,7 @@ class PVInputFromIrradianceML {
             this.updateForecast();
 
             this.csv = fs.createWriteStream('/var/log/pv.log', {flags: 'a'});
-            // FIXME: addd column weather.current.pop (probability of percepation)
-            //        and weather.current.rain (mm per hour)
-            this.csv.write('start time,\tDNI,\tDHI,\tdirectUse,\tabsorb.,\tloss1,\tloss2,\tclouds,\ttemp (' +
+            this.csv.write('start time,\tDNI,\tDHI,\tDC\tdirectUse,\tabsorb.,\tloss1,\tloss2,\tclouds,\tpop,\train,\ttemp (' +
                            new Date().toDateString() + ')\n');
 
             PVInputFromIrradianceML.instance = this;
@@ -120,8 +130,19 @@ class PVInputFromIrradianceML {
         this.sunset            = this.toPCclk(weather.current.sunset);
         this.earliestTimeOfCurrent = this.sunset;
         this.forecastStartTime = this.toPCclk(weather.hourly[0].dt);
-        this.forecastEndTime   = this.toPCclk(weather.hourly[1].dt);
-        this.pcClouds     = weather.hourly[0].clouds * 0.01;
+
+        // percentage of clouds over time and area
+        this.pcClouds     = ('clouds' in weather.hourly[0]
+                             ? weather.hourly[0].clouds * 0.01
+                             : 0);
+        // Probability of Precipitation (PoP):
+        // probability that the forecast grid/point in question will receive at least
+        // 0.01 inch = 0.254 mm of rain
+        // PoP is an indicator of the height and thickness of the clouds
+        this.pcOfPerc     = ('pop' in weather.hourly[0] ? weather.hourly[0].pop : 0);
+        // mm of rain in 1 hour is an indicator of the height and thickness of the clouds
+        this.rainInMM     = ('rain' in weather.hourly[0] && '1h' in weather.hourly[0].rain
+                             ? weather.hourly[0].rain['1h'] : 0);
     }
 
     // add this.remoteToPCclk to any remote time received from weather server
@@ -167,12 +188,15 @@ class PVInputFromIrradianceML {
         this.csv.write(t + ',\t' +
                        (convMsToH * this.EDirectNormal * (1.0 - this.pcClouds)).toFixed(4) + ',\t' +
                        (convMsToH * this.EDiffuseHorizontal * this.pcClouds).toFixed(4) + ',\t' +
+                       (convMsToH * this.EConst * this.pcClouds).toFixed(4) + ',\t' +
                        this.meter.getEDirectUse(meterId).toFixed(4) + ',\t' +
                        this.meter.getEAbsorbed(meterId).toFixed(4) + ',\t' +
                        this.meter.getELoss1(meterId).toFixed(4) + ',\t' +
                        this.meter.getELoss2(meterId).toFixed(4) + ',\t' +
                        this.pcClouds + ',\t' +
-                       this.AvgTemperature / this.EDiffuseHorizontal + '\n');
+                       this.pcOfPerc + ',\t' +
+                       this.rainInMM + ',\t' +
+                       this.AvgTemperature / this.EConst + '\n');
     }
 
     addFlowAndTemp(time) {
@@ -199,7 +223,7 @@ class PVInputFromIrradianceML {
 
         let timeDiff = time - this.lastTime;
 
-        this.AvgTemperature += this.temp * timeDiff; // needs to be divided by this.EDiffuseHorizontal
+        this.AvgTemperature += this.temp * timeDiff; // needs to be divided by this.EConst
 
         // the timestamp weather.current.dt is between
         // hourly[0].dt and hourly[1].dt. If time goes beyond
@@ -209,11 +233,11 @@ class PVInputFromIrradianceML {
         // estimated energy from the direct normal and diffuse horizontal irradiance
         this.EDirectNormal      += s * timeDiff; // needs to be multiplied with (1-clouds)
         // FIXME: rename to something else as this should be 1 hour and reflects the error through incremental adds
-        this.EDiffuseHorizontal += timeDiff;     // needs to be multiplied with clouds
-        this.EDirectOrthogonal  += c * timeDiff; // needs to be multiplied with clouds
+        this.EConst += timeDiff;     // needs to be multiplied with clouds
+        this.EDiffuseHorizontal += c * timeDiff; // needs to be multiplied with clouds
 
         // Model: collect DNI and DHI and meter data for one hour. The model 
-        // multiplies DNI with the sun angle, DNI and DHI with the clouds coverage.
+        // multiplies DNI, DHI and DC with the clouds coverage.
         // Direct used, battery absorbed and drawn currents are accumulated. Two
         // losses are estimated linear to the battery voltage and linear to the
         // PV voltage above the battery voltage. The following model allows for

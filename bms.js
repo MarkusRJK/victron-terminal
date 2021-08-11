@@ -9,6 +9,7 @@ const Alarms = require('./alarms').Alarms;
 const FlowProtection = require('./protection.js').FlowProtection;
 const BatteryProtection = require('./protection.js').BatteryProtection;
 const ChargerOverheatProtection = require('./protection.js').ChargerOverheatProtection;
+const DeviceProtection = require('./protection.js').DeviceProtection;
 var log4js = require('log4js');
 const ECMeter = require( './meter' ).EnergyAndChargeMeter;
 const PVInputFromIrradianceML = require( './forecast' ).PVInputFromIrradianceML;
@@ -819,6 +820,7 @@ class BMS extends VEdeviceSerialAccu {
         this.chargerLoadProtectionLP     = null;
         this.chargerLoadProtectionHP     = null;
         this.chargerOverheatProtectionHP = null;
+        this.deviceProtection            = new DeviceProtection(this);
         this.usageBuckets                = null;
 
         this.tracerInterval = 2000;
@@ -1064,84 +1066,124 @@ class BMS extends VEdeviceSerialAccu {
             if (this.chargerOverheatProtectionHP) {
                 this.chargerOverheatProtectionHP.setFlow(this.pvFlow, time);
             }
-        } catch (err) {
-            logger.error(err);
+        }
+        catch(err) {
+            logger.error('BMS::protectFlows failed: ' + err);
         }
     }
 
-    setFlows(changedMap, timeStamp) {
+    setFlows(changedMap) {
         logger.trace('BMS::setFlows');
-        // FIXME: average equivalent currents and voltages!!
-        if (changedMap.has('midVoltage')) {
-            // logger.debug('BMS::setFlows - midVoltage: ' +
-            //              changedMap.get('midVoltage').newValue + ', ' +
-            //              changedMap.get('midVoltage').value);
-            this.bottomFlow.setVoltage(changedMap.get('midVoltage').newValue);
+        try {
+            if (changedMap.has('midVoltage')) {
+                // logger.debug('BMS::setFlows - midVoltage: ' +
+                //              changedMap.get('midVoltage').newValue + ', ' +
+                //              changedMap.get('midVoltage').value);
+                this.bottomFlow.setVoltage(changedMap.get('midVoltage').newValue);
+            }
+            if (changedMap.has('topVoltage')) {
+                // logger.debug('BMS::setFlows - topVoltage: ' +
+                //              changedMap.get('topVoltage').newValue + ', ' +
+                //              changedMap.get('topVoltage').value);
+                this.topFlow.setVoltage(changedMap.get('topVoltage').newValue);
+            }
+            let batteryVoltage = -1;
+            if (changedMap.has('upperVoltage')) {
+                // logger.debug('BMS::setFlows - upperVoltage: ' +
+                //              changedMap.get('upperVoltage').newValue + ', ' +
+                //              changedMap.get('upperVoltage').value);
+                batteryVoltage = changedMap.get('upperVoltage').newValue;
+            }
+            if (changedMap.has('MPPTbatteryVoltage')) {
+                // upperVoltage and MPPTbatteryVoltage are the same from different devices
+                if (batteryVoltage !== -1) // average
+                    batteryVoltage = 0.5 * (changedMap.get('MPPTbatteryVoltage').newValue +
+                                            batteryVoltage);
+                else
+                    batteryVoltage = changedMap.get('MPPTbatteryVoltage').newValue;
+            }
+            if (batteryVoltage !== -1) {
+                this.chargerFlow.setVoltage(batteryVoltage);
+                this.loadFlow.setVoltage(batteryVoltage);
+            }
+            if (changedMap.has('MPPTpvVoltage')) {
+                this.pvFlow.setVoltage(changedMap.get('MPPTpvVoltage').newValue);
+            }
+            if (changedMap.has('batteryCurrent')) {
+                // see explanation to class FloatChargeCharacteristic:
+                // The current is measured across the 24V, i.e. it must be split
+                // across the lower and upper accus packs of 12V, i.e. divided by 2:
+                let current = changedMap.get('batteryCurrent').newValue * 0.5;
+                this.bottomFlow.setCurrent(current);
+                this.topFlow.setCurrent(current);
+            }
+            if (changedMap.has('MPPTchargingCurrent')) {
+                let current = changedMap.get('MPPTchargingCurrent').newValue;
+                this.chargerFlow.setCurrent(current);
+                this.pvFlow.setCurrent(current);
+            }
+            if (changedMap.has('MPPTloadCurrent')) {
+                // for consistency: everything out ot the battery
+                // is negative. MPPTloadCurrent is positive, it does not quite come
+                // out of the battery, yet it should be negative...
+                this.loadFlow.setCurrent(-changedMap.get('MPPTloadCurrent').newValue);
+            }
         }
-        if (changedMap.has('topVoltage')) {
-            // logger.debug('BMS::setFlows - topVoltage: ' +
-            //              changedMap.get('topVoltage').newValue + ', ' +
-            //              changedMap.get('topVoltage').value);
-            this.topFlow.setVoltage(changedMap.get('topVoltage').newValue);
+        catch(err) {
+            logger.error('BMS::setFlows failed: ' + err);
         }
-        let batteryVoltage = -1;
-        if (changedMap.has('upperVoltage')) {
-            // logger.debug('BMS::setFlows - upperVoltage: ' +
-            //              changedMap.get('upperVoltage').newValue + ', ' +
-            //              changedMap.get('upperVoltage').value);
-            batteryVoltage = changedMap.get('upperVoltage').newValue;
+    }
+        
+    setStates(changedMap, timeStamp) {
+        logger.trace('BMS::setStates');
+        if (! this.deviceProtection ) return;
+        // should be filled with first call at registration of ChangeList
+        let states =
+            {
+                relay: null,
+                isCharging: null
+            };
+        try {
+            if (changedMap.has('relayState'))
+                states.relay = changedMap.get('relayState').newValue;
+            if (changedMap.has('MPPTisCharging'))
+                states.isCharging = changedMap.get('MPPTisCharging').newValue;
+        
+            if (changedMap.has('MPPTisOverload'))
+                this.deviceProtection.setOverload(
+                    changedMap.get('MPPTisOverload').newValue, timeStamp);
+            if (changedMap.has('MPPTisShortcutLoad'))
+                this.deviceProtection.setShortcutLoad(
+                    changedMap.get('MPPTisShortcutLoad').newValue, timeStamp);
+            if (changedMap.has('MPPTisBatteryOverload'))
+                this.deviceProtection.setBatteryOverload(
+                    changedMap.get('MPPTisBatteryOverload').newValue, timeStamp);
+            if (changedMap.has('MPPTisFullIndicator'))
+                this.deviceProtection.setBatteryFull(
+                    changedMap.get('MPPTisFullIndicator').newValue, timeStamp);
+            if (changedMap.has('MPPTisOverDischarge'))
+                this.deviceProtection.setOverDischarge(
+                    changedMap.get('MPPTisOverDischarge').newValue, timeStamp);
+            if (changedMap.has('MPPTbatteryTemperature'))
+                this.deviceProtection.setBatteryTemperature(
+                    changedMap.get('MPPTbatteryTemperature').newValue, timeStamp);
+            if (changedMap.has('alarmState'))
+                this.deviceProtection.setMonitorAlarm(
+                    changedMap.get('alarmState').newValue, timeStamp);
+            if (changedMap.has('alarmReason'))
+                this.deviceProtection.setAlarmReason(
+                    changedMap.get('alarmReason').newValue, timeStamp);
         }
-        if (changedMap.has('MPPTbatteryVoltage')) {
-            // upperVoltage and MPPTbatteryVoltage are the same from different devices
-            if (batteryVoltage !== -1) // average
-                batteryVoltage = 0.5 * (changedMap.get('MPPTbatteryVoltage').newValue +
-                                        batteryVoltage);
-            else
-                batteryVoltage = changedMap.get('MPPTbatteryVoltage').newValue;
+        catch(err) {
+            logger.error('BMS::setStates failed: ' + err);
         }
-        if (batteryVoltage !== -1) {
-            this.chargerFlow.setVoltage(batteryVoltage);
-            this.loadFlow.setVoltage(batteryVoltage);
-        }
-        if (changedMap.has('MPPTpvVoltage')) {
-            this.pvFlow.setVoltage(changedMap.get('MPPTpvVoltage').newValue);
-        }
-        if (changedMap.has('batteryCurrent')) {
-            // see explanation to class FloatChargeCharacteristic:
-            // The current is measured across the 24V, i.e. it must be split
-            // across the lower and upper accus packs of 12V, i.e. divided by 2:
-            let current = changedMap.get('batteryCurrent').newValue * 0.5;
-            this.bottomFlow.setCurrent(current);
-            this.topFlow.setCurrent(current);
-        }
-        if (changedMap.has('MPPTchargingCurrent')) {
-            let current = changedMap.get('MPPTchargingCurrent').newValue;
-            this.chargerFlow.setCurrent(current);
-            this.pvFlow.setCurrent(current);
-        }
-        if (changedMap.has('MPPTloadCurrent')) {
-            // for consistency: everything out ot the battery
-            // is negative. MPPTloadCurrent is positive, it does not quite come
-            // out of the battery, yet it should be negative...
-            this.loadFlow.setCurrent(-changedMap.get('MPPTloadCurrent').newValue);
-        }
+        return states;
     }
 
     processData(changedMap, timeStamp) {
         logger.trace('BMS::processData');
-        // FIXME: try catch to determine "Assignment to const variable"
-        try {
-            this.setFlows(changedMap, timeStamp);
-        }
-        catch(err) {
-            logger.error('setFlows failed: ' + err);
-        }
-        try {
-            this.protectFlows(timeStamp);
-        }
-        catch(err) {
-            logger.error('protectFlows failed: ' + err);
-        }
+        this.setFlows(changedMap);
+        this.protectFlows(timeStamp);
 
         let UPv   = this.pvFlow.getVoltage();
         let UBat  = this.chargerFlow.getVoltage();
@@ -1150,15 +1192,9 @@ class BMS extends VEdeviceSerialAccu {
         let IBat  = this.topFlow.getCurrent() * 2;
         //logger.debug('BMS::processData - IPv = ' + IPv + ' IBat = ' + IBat);
 
-        try {
-            let relayState = ('relayState' in this.update() ? this.update().relayState.value : 'OFF'); // 'ON' or 'OFF'
-            ECMeter.setFlows(UPv, UBat, IPv, ILoad, IBat, relayState, timeStamp);
-        }
-        catch(err) {
-            logger.error('ECMeter.setFlows failed: ' + err);
-        }
+        let relayState = ('relayState' in this.update() ? this.update().relayState.value : 'OFF'); // 'ON' or 'OFF'
+        ECMeter.setFlows(UPv, UBat, IPv, ILoad, IBat, relayState, timeStamp);
 
-        //if (pvInput) pvInput.addFlow(this.pvFlow, timeStamp);
         try {
             if (this.pvInput) {
                 this.pvInput.setFlow(this.chargerFlow, timeStamp);
@@ -1176,24 +1212,14 @@ class BMS extends VEdeviceSerialAccu {
             logger.error('pvInput.setFlow or pvInput.setTemp failed: ' + err);
         }
 
-        try {
-            // this.getEDirectUse(index) + this.getEDrawn(index);
-            if (this.usageBuckets)
-                this.usageBuckets.logUsage(timeStamp);
-        }
-        catch(err) {
-            logger.error('logUsage in usage or baseUsage failed: ' + err);
-        }
+        if (this.usageBuckets)
+            this.usageBuckets.logUsage(relayState, timeStamp);
 
-        try {
+        if (this.batteryProtection)
             this.batteryProtection.setVoltages(this.topFlow.getVoltage(),
                                                this.bottomFlow.getVoltage(),
                                                UPv);
-        }
-        catch(err) {
-            logger.error('batteryProtection failed: ' + err);
-        }
-
+        this.setStates(changedMap, timeStamp);
     }
 
     setAccuChainVoltage(newVoltage, oldVoltage, timeStamp, key) {

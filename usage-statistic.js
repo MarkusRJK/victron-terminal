@@ -11,23 +11,23 @@ const f2 = __dirname + '/baseUsage.json';
 class BucketsWithHistory {
     // \param memory is the number of days to keep in memory
     constructor(noOfBuckets, memory) {
-        this.memory = memory;
+        this.memory = memory; // memory/history per bucket
         this.noOfBuckets = noOfBuckets;
         // array for "daysMemory" days, each day has 24 hours (buckets)
         this.buckets = null;
-        this.currentMem = 0;
     }
 
-    setNextMemory() {
-        logger.trace('BucketsWithHistory::setNextMemory');
-        this.currentMem = (this.currentMem + 1) % this.memory;
-    }
+    set(x, y, value) {
+        if (! this.buckets) throw 'BucketsWithHistory::set - no buckets';
+        x = x % this.noOfBuckets;
+        y = y % this.memory;
+        logger.trace('BucketsWithHistory::set(' + x + ', ' + y + ', ' + value + ')');
+        this.buckets[x][y] = value;
+    }  
 
-    logValue(index, value) {
-        index = index % this.noOfBuckets;
-        logger.trace('BucketsWithHistory::logValue(' + index + ' , ' + value + ')');
-        if (! this.buckets) throw 'BucketsWithHistory::logValue - no buckets';
-        this.buckets[index][this.currentMem] = value;
+    // \return first element in buckets[x] containing value
+    find(x, value) {
+        return this.buckets[x].findIndex((element) => element === value);
     }
 
     // \param index in [0; this.noOfBuckets]
@@ -40,12 +40,11 @@ class BucketsWithHistory {
         return sum / this.memory;
     }
 
-    initBuckets() {
+    initBuckets(v) {
         logger.trace('BucketsWithHistory::initBuckets - creating empty buckets');
-        this.currentMem = 0;
         this.buckets = Array.from(
             Array(this.noOfBuckets),
-            () => Array.from(Array(this.memory), () => 0));
+            () => Array.from(Array(this.memory), () => v));
     }
 }
 
@@ -54,10 +53,11 @@ class BucketsWithHistory {
 class SerializedHourlyUsageBuckets extends BucketsWithHistory {
     // \param daysMemory is the number of days to keep in memory
     constructor(daysMemory, file) {
-        // array for "daysMemory" days, each day has 24 hours (buckets)
+        // array for 24 hours (buckets) with "daysMemory" days
         super(24, daysMemory);
 
         this.file = file;
+        this.currentMem = 0;
         this.readData();
     }
 
@@ -65,13 +65,21 @@ class SerializedHourlyUsageBuckets extends BucketsWithHistory {
         this.writeData();
     }
 
+    setNextMemory(hour) {
+        this.hour = hour;
+        this.currentMem = this.find(hour, 0);
+        this.set(hour, this.currentMem + 1, 0); // mark next position for entry
+    }
+
+    logValue(hour, value) {
+        if (hour > this.hour || (hour === 0 && this.hour === 23))
+            this.setNextMemory(hour);
+        this.set(hour, this.currentMem, value);
+    }
+
     writeData() {
         logger.trace('SerializedHourlyUsageBuckets::writeData');
-        let data = {
-            today: this.currentMem,
-            buckets: this.buckets
-        }
-        let jData = JSON.stringify(data);
+        let jData = JSON.stringify(this.buckets);
         logger.info('SerializedHourlyUsageBuckets::writeData - Writing usage data to file ' + this.file);
         let usageFile = fs.createWriteStream(this.file, {flags: 'w'});
         usageFile.write(jData);
@@ -85,12 +93,9 @@ class SerializedHourlyUsageBuckets extends BucketsWithHistory {
             let data = fs.readFileSync(this.file, 'utf8');
             let usageObj = JSON.parse(data);
 
-            this.currentMem = (usageObj.today ? usageObj.today : 0);
-
-            if (usageObj.buckets && typeof usageObj.buckets === 'object'
-                && usageObj.buckets.length === 24) {
+            if (usageObj.length === 24) {
                 logger.info('SerializedHourlyUsageBuckets::readData - read usage object from file' + this.file);
-                this.buckets = usageObj.buckets.map((b, index) => {
+                this.buckets = usageObj.map((b, index) => {
                     let returnArray = new Array(this.memory);
                     for (let i = 0; i < this.memory; ++i) {
                         // return 0 if b is undefined or null or else
@@ -108,7 +113,7 @@ class SerializedHourlyUsageBuckets extends BucketsWithHistory {
             logger.error(`cannot read: ${this.file} (${err.code === 'ENOENT' ? 'does not exist' : 'is not readable'})`);
         }
         if (! isFileRead) {
-            this.initBuckets();
+            this.initBuckets(0);
         }
     }
 }
@@ -121,24 +126,35 @@ class HourlyUsageBuckets {
         this.baseUsage      = null;
         this.usageMeterId   = 0;
         this.writeUsageTask = null;
+        this.addWriteTask   = null;
     }
 
     terminate() {
         if (this.writeUsageTask) this.writeUsageTask.stop();
+        clearInterval(this.addWriteTask);
         // FIXME: destroy() errors although api says that tasks have destroy()
         //this.writeTask.destroy(); 
         if (this.usage) this.usage.terminate();
         if (this.baseUsage) this.baseUsage.terminate();
     }
 
-    logUsage(timeStamp) {
-        logger.trace('HourlyUsageBuckets::logUsage');
-        const hour = new Date(timeStamp).getHours();
-        // FIXME: ELowVoltUse > EUsed when relay is OFF although  - how should it actually be? Equal?
-        if (this.usage)
-            this.usage.logValue(hour, ECMeter.getEUsed(this.usageMeterId));
-        if (this.baseUsage)
-            this.baseUsage.logValue(hour, ECMeter.getELowVoltUse(this.usageMeterId));
+    logUsage(relayState, timeStamp) {
+        try {
+            logger.trace('HourlyUsageBuckets::logUsage');
+            const hour = new Date(timeStamp).getHours();
+            // FIXME: only log the EUsed value if the relay is on and only for the time
+            //        it is on. If relay not on for the full hour, scale usage to full hour
+            //        and mix with value in the cell by weights (length of time)
+            if (this.usage && relayState === 'ON')
+                this.usage.logValue(hour, ECMeter.getEUsed(this.usageMeterId)
+                                    - ECMeter.getELowVoltUse(this.usageMeterId));
+            // somehow count time while relay is on for scaling
+            if (this.baseUsage)
+                this.baseUsage.logValue(hour, ECMeter.getELowVoltUse(this.usageMeterId));
+        }
+        catch(err) {
+            logger.error('HourlyUsageBuckets::logUsage failed: ' + err);
+        }
     }
 
     parseConfig(config) {
@@ -155,7 +171,7 @@ class HourlyUsageBuckets {
         this.baseUsage = new SerializedHourlyUsageBuckets(h, f2);
         this.usageMeterId = ECMeter.setStart();
 
-        // schedule a write every full hour
+        // schedule a write every full hour, reset the meter and change to next day at 0:00
         //                                   ┌────────────── second (optional)
         //                                   │ ┌──────────── minute
         //                                   │ │ ┌────────── hour
@@ -168,24 +184,21 @@ class HourlyUsageBuckets {
             logger.debug('cron: write usage, reset meter for next hour');
             let uObj = this.usage;
             let buObj = this.baseUsage;
-            let thisHour = (new Date()).getHours();
             logger.debug('cron: current hour ' + thisHour);
             if (!uObj || ! buObj) {
                 logger.warn('cron: No usage, baseUsage exists');
                 return;
             }
-            if (thisHour === 0) {
-                logger.info('cron: set next day');
-                uObj.setNextMemory();
-                buObj.setNextMemory();
-            };
             uObj.writeData();
             buObj.writeData();
             ECMeter.setStart(this.usageMeterId);
         }).bind(this));
+        // additional writes so that no data is lost if application is restarted
+        this.addWriteTask = setInterval((() => {
+            this.usage.writeData();
+            this.baseUsage.writeData();
+        }).bind(this), 660000); // = 11 minutes = 11 * 60 * 1000
     }
-
-
 }
 
 

@@ -47,10 +47,11 @@ class Meter {
         // return {
         //     directUse:  this.EWMs.directUse,
         //     lowVoltUse: this.EWMs.lowVoltUse,
+        //     useWhileOn: this.EWMs.useWhileOn,
         //     absorbed:   this.EWMs.absorbed,
         //     drawn:      this.EWMs.drawn,
         //     loss1:      this.EWMs.loss1,
-        //     loss2:      this.EWMs.loss2,
+        //     loss2:      this.EWMs.loss2
         // };
     }
 }
@@ -81,17 +82,28 @@ class EnergyAndChargeMeter extends Meter {
             // lowVoltUse is fully contained in directUse but recorded
             // separate as a constant draw of energy
             EWMs: {
+                // energy used directly from panels
                 directUse:  0,
+                // energy used round the clock directly from the MPPT charger
                 lowVoltUse: 0,
+                // energy used by household during the time the relay is ON.
+                // The total energy used by the household can only measured
+                // while the relay is on
+                useWhileOn: 0,
+                // energy absorbed from the battery
                 absorbed:   0,
+                // energy drawn from the battery
                 drawn:      0,
+                // energy loss related to MPPT charger e.g. when battery is
+                // full and MPPT has to burn energy
                 loss1:      0,
-                loss2:      0,
+                // energy loss related to charge and discharge of batteries
+                loss2:      0
             },
             // C = capacity: is in Ampere milliseconds - needs to be converted to Ah
             CAMs: {
                 absorbed:   0,
-                drawn:      0,
+                drawn:      0
             }
         }
     }
@@ -102,14 +114,15 @@ class EnergyAndChargeMeter extends Meter {
             EWMs: {
                 directUse:  this.meter.EWMs.directUse,
                 lowVoltUse: this.meter.EWMs.lowVoltUse,
+                useWhileOn: this.meter.EWMs.useWhileOn,
                 absorbed:   this.meter.EWMs.absorbed,
                 drawn:      this.meter.EWMs.drawn,
                 loss1:      this.meter.EWMs.loss1,
-                loss2:      this.meter.EWMs.loss2,
+                loss2:      this.meter.EWMs.loss2
             },
             CAMs: {
                 absorbed:   this.meter.CAMs.absorbed,
-                drawn:      this.meter.CAMs.drawn,
+                drawn:      this.meter.CAMs.drawn
             }  
         };
     }
@@ -117,16 +130,21 @@ class EnergyAndChargeMeter extends Meter {
     setFlows(UPv, UBat, IPv, ILoad, IBat, relayState, time) {
         logger.trace('EnergyAndChargeMeter::setFlows ' +
                     UPv + ' ' + UBat + ' ' + IPv + ' ' + ILoad + ' ' + IBat + ' ' + relayState);
-        this.UPv    = UPv;
-        this.UBat   = UBat;
-        this.IPv    = IPv;
-        this.ILoad  = ILoad;
-        this.IBat   = IBat;
-        this.RState = relayState;
-        
-        if (time !== 0) this.accumulate(time);
-        
-        this.lastTime = time;
+        try {
+            this.UPv    = UPv;
+            this.UBat   = UBat;
+            this.IPv    = IPv;
+            this.ILoad  = ILoad;
+            this.IBat   = IBat;
+            this.RState = relayState;
+            
+            if (time !== 0) this.accumulate(time);
+            
+            this.lastTime = time;
+        }
+        catch(err) {
+            logger.error('EnergyAndChargeMeter::setFlows failed: ' + err);
+        }
     }   
 
     accumulate(time) {
@@ -180,24 +198,31 @@ class EnergyAndChargeMeter extends Meter {
         // <= 0 && on:     IPv             0         IBat   0                UBat * IBat
         // > 0  && off:    min(IPv,ILoad)  IBat      0      (UPv-UBat)*IBat  UBat * IBat
         // > 0  && on:     IPv-IBat        IBat      0      (UPv-UBat)*IBat  UBat * IBat
-        let C = this.IBat * timeDiff;
-        let IBat = this.IBat;
+        let C      = this.IBat * timeDiff;
+        let IBat   = this.IBat;
+        let Edrawn = this.UBat * C;
         if (this.IBat > 0) { // charging
-            // FIXME: for correct metering determine whether ILoad is contained in IPv?
-            //        it appears IPv = ILoad + IBat (no load on battery), load is negative!!!
             this.meter.CAMs.absorbed      += C;
-            this.meter.EWMs.absorbed      += this.UBat * C;
+            this.meter.EWMs.absorbed      += Edrawn;
             // IBat > 0 => UPv >= UBat
             this.meter.EWMs.loss1         += Math.max(0, this.UPv - this.UBat) * C;
-            this.meter.EWMs.loss2         += this.UBat * C;
+            this.meter.EWMs.loss2         += Edrawn;
         } else {
             IBat = 0;
             this.meter.CAMs.drawn         += -C; // drawn ampere hours / convMsToH
-            this.meter.EWMs.drawn         += -this.UBat * C; // drawn energy / convMsToH
-            this.meter.EWMs.loss2         += -this.UBat * C;
+            this.meter.EWMs.drawn         += -Edrawn; // drawn energy / convMsToH
+            this.meter.EWMs.loss2         += -Edrawn;
         }
-        if (this.RState === 'ON')
-            this.meter.EWMs.directUse += this.UBat * (this.IPv - IBat) * timeDiff;
+        // IPv occasionally becomes negative when the MPPT charger blocks discharge
+        // over PV panels too late or discharges on purpose over PV panels
+        if (this.IPv < 0) this.meter.EWMs.loss1 = -this.UPv - this.IPv * timeDiff;
+        let IPv = Math.max(this.IPv, 0);
+
+        if (this.RState === 'ON') {
+            let EdirectUse = this.UBat * (this.IPv - IBat) * timeDiff;
+            this.meter.EWMs.directUse  += EdirectUse;
+            this.meter.EWMs.useWhileOn += EdirectUse - Edrawn;
+        }
         else
             this.meter.EWMs.directUse += this.UBat * Math.min(this.IPv,-this.ILoad) * timeDiff;
         // logger.debug(this.meter.EWMs.directUse + ' ' + this.meter.EWMs.absorbed  + ' ' + this.meter.EWMs.drawn +
@@ -262,21 +287,23 @@ class EnergyAndChargeMeter extends Meter {
         return (this.meter.EWMs.drawn - subtract + drawnLastMinutes) * convMsToH;
     }
     getEUsed(index) {
-        if (this.getEDirectUse(index) + this.getEDrawn(index) < 0) {
-            logger.error('big error!!!!')
-            logger.error('timediff:' + (Date.now() - this.lastTime));
-            logger.error('subtract: ' + this.MeterStarts.get(index).EWMs.directUse);
-            logger.error('Ubat: ' + this.UBat);
-            logger.error('IBat: ' + this.IBat);
-            logger.error('IPV: ' + this.IPV);
-            logger.error('Iload: ' + this.ILoad);
-            let du = this.UBat * Math.min(this.IPv,-this.ILoad) * timeDiff;
-            let i = (this.IBat > 0 ? this.IBat : 0);
-            logger.error('directUseLastMinutes: ' +
-                         (this.RState === 'ON' ? this.UBat * (this.IPv - i) * timeDiff : du));
-            logger.error('directUse: ' + this.meter.EWMs.directUse);
+        let timeDiff = Date.now() - this.lastTime;
+        let subtract = 0;
+        if (typeof index !== 'undefined' && index !== null &&
+            (this.MeterStarts.has(index))) subtract = this.MeterStarts.get(index).EWMs.useWhileOn;
+        else if (typeof index !== 'undefined')
+            logger.fatal('EnergyAndChargeMeter has no index ' + index);
+
+        let usedLastMinutes = 0;
+        if (this.RState === 'ON') {
+            let IPv        = Math.max(this.IPv, 0);
+            let IBat       = (this.IBat > 0 ? this.IBat : 0);
+            // IPv < IBat would mean charge current is more than supplied by PV
+            let EdirectUse = this.UBat * (IPv - IBat) * timeDiff;
+            let Edrawn     = (this.IBat < 0 ? this.UBat * this.IBat * timeDiff : 0);
+            usedLastMinutes = EdirectUse - Edrawn;
         }
-        return this.getEDirectUse(index) + this.getEDrawn(index);
+        return (this.meter.EWMs.useWhileOn - subtract + usedLastMinutes) * convMsToH;
     }
     // convert Energy to Euro in IRL
     toEuroInclVAT(energyInWh) {
@@ -339,6 +366,7 @@ class EnergyAndChargeMeter extends Meter {
             time:         Date.now(),
             directUse:    this.getEDirectUse().toFixed(4),
             lowVoltUsed:  this.getELowVoltUse().toFixed(4),
+            useWhileOn:   this.getEUsed().toFixed(4),
             absorbed:     this.getEAbsorbed().toFixed(4),
             drawn:        this.getEDrawn().toFixed(4),
             loss1:        this.getELoss1().toFixed(4),
@@ -367,6 +395,8 @@ class EnergyAndChargeMeter extends Meter {
                               ? meterObj.directUse  : 0) / convMsToH;
             let lowVoltUse = ('lowVoltUse' in meterObj && meterObj.lowVoltUse
                               ? meterObj.lowVoltUse : 0) / convMsToH;
+            let useWhileOn = ('useWhileOn' in meterObj && meterObj.useWhileOn
+                              ? meterObj.useWhileOn : 0) / convMsToH;
             let absorbed   = ('absorbed' in meterObj && meterObj.absorbed
                               ? meterObj.absorbed   : 0) / convMsToH;
             let drawn      = ('drawn' in meterObj && meterObj.drawn
@@ -377,6 +407,7 @@ class EnergyAndChargeMeter extends Meter {
                               ? meterObj.loss2      : 0) / convMsToH;
             this.meter.EWMs.directUse  = directUse;
             this.meter.EWMs.lowVoltUse = lowVoltUse;
+            this.meter.EWMs.useWhileOn = useWhileOn;
             this.meter.EWMs.absorbed   = absorbed;
             this.meter.EWMs.drawn      = drawn;
             this.meter.EWMs.loss1      = loss1;

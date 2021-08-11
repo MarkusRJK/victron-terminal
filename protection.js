@@ -178,41 +178,65 @@ class BatteryProtection extends Switcher {
         // logger.debug('BatteryProtection: ' + topVoltage);
         // logger.debug('BatteryProtection: ' + bottomVoltage);
         // logger.debug('BatteryProtection: ' + pvVoltage);
-        // FIXME: add alarms
-        if (topVoltage + bottomVoltage >= pvVoltage + this.minDiffForCharge) {
-            // FIXME: does not allow to switch at night (switches back immediately)
-            // use a mask flag that can be set when relay is switches manually
-            //this.actor.setRelay(0);
+
+        try {
+            // FIXME: add alarms
+            if (topVoltage + bottomVoltage >= pvVoltage + this.minDiffForCharge) {
+                // FIXME: does not allow to switch at night (switches back immediately)
+                // use a mask flag that can be set when relay is switches manually
+                //this.actor.setRelay(0);
+            }
+            if (topVoltage < this.minAccuVoltage) {
+                this.actor.setRelay(0);
+            }
+            if (bottomVoltage < this.minAccuVoltage) {
+                this.actor.setRelay(0);
+            }
         }
-        if (topVoltage < this.minAccuVoltage) {
-            this.actor.setRelay(0);
+        catch(err) {
+            logger.error('BatteryProtection::setVoltages failed: ' + err);
         }
-        if (bottomVoltage < this.minAccuVoltage) {
-            this.actor.setRelay(0);
-        }
+
     }
 }
 
 
 // Protection / Alarm if BMV alarm or MPPT alarming bits
 class DeviceProtection {
-    constructor() {};
+    constructor(actor) { this.actor = actor; };
 
-    setOverload() {};
-    clearOverload() {};
+    removeLoad() {
+        logger.debug("DeviceProtection::removeLoad"); // FIXME: revert to trace
+        this.actor.setRelay(0);
+    }
+
+    // FIXME: it appears that two subsequent calls of switchload result in relay ON_OFF_ON behaviour
+    switchLoad() {
+        logger.debug("DeviceProtection::switchLoad"); // FIXME: revert to trace
+        this.actor.setRelay(1);
+    }
     
-    setShortcutLoad() {};
-    clearShortcutLoad() {};
+    // FIXME: add alarms
+    setOverload(isOverload, time) {}; // if isOverload register alarm
+    
+    setShortcutLoad(isShortcut, time) {}; // if isShortcut register alarm
 
-    setBatteryOverload() {};
-    clearBatteryOverload() {};
+    setBatteryOverload(isOverload, time) {
+        this.removeLoad();
+    };
 
-    setOverDischarge() {};
-    clearOverDischarge() {};
+    setBatteryFull(isFull, time) {
+        this.switchLoad();
+    };
 
-    //setBatteryTemperature() {};
+    setOverDischarge(isOverDischarge, time) {
+        this.removeLoad();
+    };
 
-    setBMVAlarm() {};
+    setBatteryTemperature(temp, time) {}; // if temp > threshold register alarm
+
+    setMonitorAlarm(alarm, time) {}; // if isShortcut register alarm
+    setAlarmReason(reason, time) {}; // if isShortcut register alarm reason
 }
 
 
@@ -242,7 +266,22 @@ class ChargerOverheatProtection {
         if (U >= this.config.maxVoltage && I <= this.config.whenCurrentBelow) {
             this.alarm.raise(this.id + 4, this.config.alarmLevel,
                              this.name + ": charger discharging; voltage " + Ustr +
-                             " and charging at " + Istr,
+                             " at " + Istr,
+                             "Switching load on battery");
+            // For now just raise the alarm. The MPPT charger needs to be reset.
+            // There is no obvious command to reset the MPPT charger and for now
+            // it has to be done manually by pulling all fuses to fully disconnect
+            // the charger.
+            // It is unclear whether switching on load would help.
+            //FIXME not good: if (this.config.alarmLevel === 2) this.switchLoad();
+        }
+        else this.alarm.clear(this.id + 4, true);
+
+        // negative PV current ==> electricity is pumped into PV
+        if (I <= 0) {
+            this.alarm.raise(this.id + 4, this.config.alarmLevel,
+                             this.name + ": charger discharging; voltage " + Ustr +
+                             " at " + Istr,
                              "Switching load on battery");
             // For now just raise the alarm. The MPPT charger needs to be reset.
             // There is no obvious command to reset the MPPT charger and for now
@@ -259,3 +298,4 @@ class ChargerOverheatProtection {
 module.exports.BatteryProtection = BatteryProtection;
 module.exports.FlowProtection = FlowProtection;
 module.exports.ChargerOverheatProtection = ChargerOverheatProtection;
+module.exports.DeviceProtection = DeviceProtection;
