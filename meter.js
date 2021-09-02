@@ -48,6 +48,7 @@ class Meter {
         //     directUse:  this.EWMs.directUse,
         //     lowVoltUse: this.EWMs.lowVoltUse,
         //     useWhileOn: this.EWMs.useWhileOn,
+        //     onTime:     this.onTime,
         //     absorbed:   this.EWMs.absorbed,
         //     drawn:      this.EWMs.drawn,
         //     loss1:      this.EWMs.loss1,
@@ -78,6 +79,7 @@ class EnergyAndChargeMeter extends Meter {
     resetAccumulations() {
         logger.trace('EnergyAndChargeMeter::resetAccumulations');
         this.meter = {
+            onTime:         0,
             // E = Energy: is in Watt milliseconds - needs to be converted to Wh
             // lowVoltUse is fully contained in directUse but recorded
             // separate as a constant draw of energy
@@ -111,6 +113,7 @@ class EnergyAndChargeMeter extends Meter {
     getObjectClone() {
         logger.debug('EnergyAndChargeMeter::getObjectClone'); // FIXME: revert to trace
         return {
+            onTime:         this.meter.onTime,
             EWMs: {
                 directUse:  this.meter.EWMs.directUse,
                 lowVoltUse: this.meter.EWMs.lowVoltUse,
@@ -222,6 +225,7 @@ class EnergyAndChargeMeter extends Meter {
             let EdirectUse = this.UBat * (this.IPv - IBat) * timeDiff;
             this.meter.EWMs.directUse  += EdirectUse;
             this.meter.EWMs.useWhileOn += EdirectUse - Edrawn;
+            this.meter.onTime          += timeDiff;
         }
         else
             this.meter.EWMs.directUse += this.UBat * Math.min(this.IPv,-this.ILoad) * timeDiff;
@@ -301,7 +305,7 @@ class EnergyAndChargeMeter extends Meter {
             // IPv < IBat would mean charge current is more than supplied by PV
             let EdirectUse = this.UBat * (IPv - IBat) * timeDiff;
             let Edrawn     = (this.IBat < 0 ? this.UBat * this.IBat * timeDiff : 0);
-            usedLastMinutes = EdirectUse - Edrawn;
+            usedLastMinutes = EdirectUse - Edrawn; // yes: - Edrawn because this.IBat < 0
         }
         return (this.meter.EWMs.useWhileOn - subtract + usedLastMinutes) * convMsToH;
     }

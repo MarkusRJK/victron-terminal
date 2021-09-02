@@ -222,17 +222,27 @@ class DeviceProtection {
     setShortcutLoad(isShortcut, time) {}; // if isShortcut register alarm
 
     setBatteryOverload(isOverload, time) {
-        this.removeLoad();
+        if (isOverload) {
+            logger.debug("Battery overload detected by charger - removing load");
+            this.removeLoad();
+        }
     };
 
     setBatteryFull(isFull, time) {
-        this.switchLoad();
+        if (isFull) {
+            logger.debug("Battery full detected by charger - switch on load");
+            this.switchLoad();
+        }
     };
 
     setOverDischarge(isOverDischarge, time) {
-        this.removeLoad();
+        if (isOverDischarge) {
+            logger.debug("Battery discharged detected by charger - remove on load");
+            this.removeLoad();
+        }
     };
 
+    // move to ChargerOverheatProtection
     setBatteryTemperature(temp, time) {}; // if temp > threshold register alarm
 
     setMonitorAlarm(alarm, time) {}; // if isShortcut register alarm
@@ -278,7 +288,7 @@ class ChargerOverheatProtection {
         else this.alarm.clear(this.id + 4, true);
 
         // negative PV current ==> electricity is pumped into PV
-        if (I <= 0) {
+        if (I < 0) {
             this.alarm.raise(this.id + 4, this.config.alarmLevel,
                              this.name + ": charger discharging; voltage " + Ustr +
                              " at " + Istr,

@@ -1,6 +1,6 @@
 {
-  "name": "BMV_terminal",
-  "version": "0.0.2",
+  "name": "Victron Terminal",
+  "version": "0.1.0",
   "description": "Terminal control for Victron Battery management",
   "main": "bmv-terminal.js",
   "repository": {
@@ -22,7 +22,7 @@
     "mathjs": "^5.1.0",
     "node-cron": "^3.0.0",
     "terminal-kit": "^2.1.0",
-    "ve_bms_forecast": "git+https://git@github.com/MarkusRJK/ve_bms_forecast.git#add-singleton_class_ES6"
+    "victron-server": "git+https://git@github.com/MarkusRJK/victron-server.git#feature-command_handling"
   },
   "author": {
     "name": "Markus Kohler <Markus.Kohler@udo.edu>"

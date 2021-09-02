@@ -57,8 +57,12 @@ class SerializedHourlyUsageBuckets extends BucketsWithHistory {
         super(24, daysMemory);
 
         this.file = file;
+        this.hour = 0;
         this.currentMem = 0;
         this.readData();
+
+        const hour = new Date().getHours();
+        this.setNextMemory(hour);
     }
 
     terminate() {
@@ -66,15 +70,18 @@ class SerializedHourlyUsageBuckets extends BucketsWithHistory {
     }
 
     setNextMemory(hour) {
+        logger.debug('SerializedHourlyUsageBuckets::setNextMemory(' + hour + ')');
+        logger.debug('changing from hour ' + this.hour + ' to ' + hour);
         this.hour = hour;
+        logger.debug('changing from currMem ' + this.currentMem);
         this.currentMem = this.find(hour, 0);
+        logger.debug('                   to ' + this.currentMem);
         this.set(hour, this.currentMem + 1, 0); // mark next position for entry
+        logger.debug('mark hour ' + hour + ' currMem ' + this.currentMem + ' with 0');
     }
 
-    logValue(hour, value) {
-        if (hour > this.hour || (hour === 0 && this.hour === 23))
-            this.setNextMemory(hour);
-        this.set(hour, this.currentMem, value);
+    logValue(value) {
+        this.set(this.hour, this.currentMem, value);
     }
 
     writeData() {
@@ -125,12 +132,12 @@ class HourlyUsageBuckets {
         this.usage          = null;
         this.baseUsage      = null;
         this.usageMeterId   = 0;
-        this.writeUsageTask = null;
+        //this.writeUsageTask = null;
         this.addWriteTask   = null;
     }
 
     terminate() {
-        if (this.writeUsageTask) this.writeUsageTask.stop();
+        //if (this.writeUsageTask) this.writeUsageTask.stop();
         clearInterval(this.addWriteTask);
         // FIXME: destroy() errors although api says that tasks have destroy()
         //this.writeTask.destroy(); 
@@ -138,19 +145,38 @@ class HourlyUsageBuckets {
         if (this.baseUsage) this.baseUsage.terminate();
     }
 
+    isNextHour(hour) {
+        let value = (hour > this.hour || (hour === 0 && this.hour === 23));
+        logger.debug('isNextHour: hour = ' + hour + ' this.hour = ' + this.hour);
+        if (value) logger.debug('isNextHour: true');
+        return value;
+    }
+
     logUsage(relayState, timeStamp) {
         try {
+            // FIXME: some initial huge values
+            // FIXME: no progressing into next array field
             logger.trace('HourlyUsageBuckets::logUsage');
             const hour = new Date(timeStamp).getHours();
             // FIXME: only log the EUsed value if the relay is on and only for the time
             //        it is on. If relay not on for the full hour, scale usage to full hour
             //        and mix with value in the cell by weights (length of time)
-            if (this.usage && relayState === 'ON')
-                this.usage.logValue(hour, ECMeter.getEUsed(this.usageMeterId)
-                                    - ECMeter.getELowVoltUse(this.usageMeterId));
+            //        ==> leads to negative usage values
+            if (this.usage && relayState === 'ON') {
+                // FIXME: is this correcter now?
+                // FIXME: EUsed sometimes < 0 why?
+                this.usage.logValue(ECMeter.getEUsed(this.usageMeterId));
+                    //- ECMeter.getELowVoltUse(this.usageMeterId));
+            }
             // somehow count time while relay is on for scaling
-            if (this.baseUsage)
-                this.baseUsage.logValue(hour, ECMeter.getELowVoltUse(this.usageMeterId));
+            if (this.baseUsage) {
+                this.baseUsage.logValue(ECMeter.getELowVoltUse(this.usageMeterId));
+            }
+            if (this.isNextHour(hour)) {
+                this.usage.setNextMemory(hour);
+                this.baseUsage.setNextMemory(hour);
+                this.usageMeterId = ECMeter.setStart(this.usageMeterId);
+            }
         }
         catch(err) {
             logger.error('HourlyUsageBuckets::logUsage failed: ' + err);
@@ -180,21 +206,21 @@ class HourlyUsageBuckets {
         //                                   │ │ │ │ │ ┌──── day of week
         //                                   │ │ │ │ │ │
         //                                   │ │ │ │ │ │
-        this.writeUsageTask = cron.schedule('0 0 * * * *', (() => {
-            logger.debug('cron: write usage, reset meter for next hour');
-            let uObj = this.usage;
-            let buObj = this.baseUsage;
-            logger.debug('cron: current hour ' + thisHour);
-            if (!uObj || ! buObj) {
-                logger.warn('cron: No usage, baseUsage exists');
-                return;
-            }
-            uObj.writeData();
-            buObj.writeData();
-            ECMeter.setStart(this.usageMeterId);
-        }).bind(this));
+        // this.writeUsageTask = cron.schedule('0 0 * * * *', (() => {
+        //     logger.debug('cron: write usage, reset meter for next hour');
+        //     let uObj = this.usage;
+        //     let buObj = this.baseUsage;
+        //     logger.debug('cron: current hour ' + thisHour);
+        //     if (!uObj || ! buObj) {
+        //         logger.warn('cron: No usage, baseUsage exists');
+        //         return;
+        //     }
+        //     uObj.writeData();
+        //     buObj.writeData();
+        // }).bind(this));
         // additional writes so that no data is lost if application is restarted
         this.addWriteTask = setInterval((() => {
+            logger.debug('addWriteTask');
             this.usage.writeData();
             this.baseUsage.writeData();
         }).bind(this), 660000); // = 11 minutes = 11 * 60 * 1000

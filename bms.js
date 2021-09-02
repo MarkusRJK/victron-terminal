@@ -112,7 +112,8 @@ class Flow {
 
 class RestingCharacteristic
 {
-    // Gel Battery:
+    // Different sources reported the following
+    // SOC per voltage for Gel Batteries:
     // 12.0V 12.00 11.76 11.98  0%
     // 12.2V 12.25 12.00        25%
     // 12.3V 12.40 12.30 12.40  50%
@@ -751,6 +752,10 @@ class VEdeviceSerialAccu extends VEdeviceClass {
                 //this.rxtx.runOnFunction('topVoltage', this.cache.topVoltage);
             }).bind(this)
         );
+        // FIXME: remove once bug found - to debug the constant difference in mid and top voltage
+        //        and they never add up to main voltage.
+        this.cache.upperVoltage.delta = 0.0000000001;
+        this.cache.midVoltage.delta = 0.0000000001;
         // this.cache.topSOC          = createObject(1,  "%", "Top SOC", {'formatter' : function()
         // {
         //      let topSOC    = estimate_SOC(this.cache.topVoltage.formatted());
@@ -763,6 +768,20 @@ class VEdeviceSerialAccu extends VEdeviceClass {
         //      bottomSOC = Math.round(bottomSOC * 100) / 100;
         //      return bottomSOC;
         // }});
+
+        // FIXME: for debugging of any relay state changes that were 
+        //        initiated by BMV itself without involvement of this code
+        this.registerComponent('Relay'); // create Relay object
+        this.cache.relayState.on.push(
+            ((newValue, oldValue, packageArrivalTime, key) => {
+                logger.fatal('relayState change from ' + oldValue + ' to ' + newValue);
+                // dump all bmv values
+                let data = JSON.stringify(this.cache);
+                let file = __dirname + '/bmvdump.json';
+                let dump_file = fs.createWriteStream(file, {flags: 'w'});
+                dump_file.write(data);
+            }).bind(this)
+        );
     }
 }
 
