@@ -105,7 +105,8 @@ class EnergyAndChargeMeter extends Meter {
             // C = capacity: is in Ampere milliseconds - needs to be converted to Ah
             CAMs: {
                 absorbed:   0,
-                drawn:      0
+                drawn:      0,
+                level:      0
             }
         }
     }
@@ -125,7 +126,8 @@ class EnergyAndChargeMeter extends Meter {
             },
             CAMs: {
                 absorbed:   this.meter.CAMs.absorbed,
-                drawn:      this.meter.CAMs.drawn
+                drawn:      this.meter.CAMs.drawn,
+                level:      this.meter.CAMs.level
             }  
         };
     }
@@ -206,6 +208,7 @@ class EnergyAndChargeMeter extends Meter {
         let Edrawn = this.UBat * C;
         if (this.IBat > 0) { // charging
             this.meter.CAMs.absorbed      += C;
+            this.meter.CAMs.level         += C;
             this.meter.EWMs.absorbed      += Edrawn;
             // IBat > 0 => UPv >= UBat
             this.meter.EWMs.loss1         += Math.max(0, this.UPv - this.UBat) * C;
@@ -213,13 +216,13 @@ class EnergyAndChargeMeter extends Meter {
         } else {
             IBat = 0;
             this.meter.CAMs.drawn         += -C; // drawn ampere hours / convMsToH
+            this.meter.CAMs.level         +=  C * this.meter.CAMs.absorbed / this.meter.CAMs.drawn;
             this.meter.EWMs.drawn         += -Edrawn; // drawn energy / convMsToH
             this.meter.EWMs.loss2         += -Edrawn;
         }
         // IPv occasionally becomes negative when the MPPT charger blocks discharge
-        // over PV panels too late or discharges on purpose over PV panels
-        if (this.IPv < 0) this.meter.EWMs.loss1 = -this.UPv - this.IPv * timeDiff;
-        let IPv = Math.max(this.IPv, 0);
+        // over PV panels too late, or discharges on purpose over PV panels
+        if (this.IPv < 0) this.meter.EWMs.loss1 += -this.UPv * this.IPv * timeDiff;
 
         if (this.RState === 'ON') {
             let EdirectUse = this.UBat * (this.IPv - IBat) * timeDiff;
@@ -362,6 +365,22 @@ class EnergyAndChargeMeter extends Meter {
         if (this.IBat < 0) drawnLastMinutes =  -this.IBat * timeDiff; 
         return (this.meter.CAMs.drawn - subtract + drawnLastMinutes) * convMsToH;
     }
+    getCLevel(index) {
+        let timeDiff = Date.now() - this.lastTime;
+        let subtract = 0;
+        if (typeof index !== 'undefined' && index !== null &&
+            (this.MeterStarts.has(index))) subtract = this.MeterStarts.get(index).CAMs.level;
+        else if (typeof index !== 'undefined')
+            logger.fatal('EnergyAndChargeMeter has no index ' + index);
+
+        let drawnLastMinutes = 0;
+        let absorbedLastMinutes = 0;
+        if (this.IBat < 0) drawnLastMinutes =  -this.IBat * timeDiff;
+        else absorbedLastMinutes = this.IBat * timeDiff;
+
+        return (this.meter.CAMs.level - subtract + absorbedLastMinutes - drawnLastMinutes)
+            * convMsToH;
+    }
 
     writeData() {
         logger.trace('EnergyAndChargeMeter::writeData');
@@ -378,6 +397,7 @@ class EnergyAndChargeMeter extends Meter {
 
             AhAbsorbed:   this.getCAbsorbed().toFixed(4),
             AhDrawn:      this.getCDrawn().toFixed(4),
+            AhLevel:      this.getCLevel().toFixed(4),
 
             kWhHarvested: this.toEuroInclVAT(this.getEUsed()).toFixed(2)
         };
@@ -405,6 +425,8 @@ class EnergyAndChargeMeter extends Meter {
                               ? meterObj.absorbed   : 0) / convMsToH;
             let drawn      = ('drawn' in meterObj && meterObj.drawn
                               ? meterObj.drawn      : 0) / convMsToH;
+            let level      = ('level' in meterObj && meterObj.level
+                              ? meterObj.level      : 0) / convMsToH;
             let loss1      = ('loss1' in meterObj && meterObj.loss1
                               ? meterObj.loss1      : 0) / convMsToH;
             let loss2      = ('loss2' in meterObj && meterObj.loss2
@@ -421,6 +443,7 @@ class EnergyAndChargeMeter extends Meter {
             drawn    = (meterObj.AhDrawn     ? meterObj.AhDrawn     : 0) / convMsToH;
             this.meter.CAMs.absorbed  = absorbed;
             this.meter.CAMs.drawn     = drawn;
+            this.meter.CAMs.level     = level;
             logger.info('Meter data retrieved from ' + file);
         }
         catch (err) {

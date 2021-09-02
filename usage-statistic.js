@@ -80,6 +80,10 @@ class SerializedHourlyUsageBuckets extends BucketsWithHistory {
         logger.debug('mark hour ' + hour + ' currMem ' + this.currentMem + ' with 0');
     }
 
+    getCurrentHour() {
+        return this.hour;
+    }
+
     logValue(value) {
         this.set(this.hour, this.currentMem, value);
     }
@@ -146,8 +150,11 @@ class HourlyUsageBuckets {
     }
 
     isNextHour(hour) {
-        let value = (hour > this.hour || (hour === 0 && this.hour === 23));
-        logger.debug('isNextHour: hour = ' + hour + ' this.hour = ' + this.hour);
+        // usage and baseUsage' hours are always in sync
+        const currHour = this.baseUsage.getCurrentHour();
+        let value = (hour > currHour
+                     || (hour === 0 && currHour === 23));
+        logger.debug('isNextHour: hour = ' + hour + ' this.hour = ' + currHour);
         if (value) logger.debug('isNextHour: true');
         return value;
     }
@@ -156,13 +163,14 @@ class HourlyUsageBuckets {
         try {
             // FIXME: some initial huge values
             // FIXME: no progressing into next array field
-            logger.trace('HourlyUsageBuckets::logUsage');
+            logger.debug('HourlyUsageBuckets::logUsage'); // FIXME: revert to trace
             const hour = new Date(timeStamp).getHours();
             // FIXME: only log the EUsed value if the relay is on and only for the time
             //        it is on. If relay not on for the full hour, scale usage to full hour
             //        and mix with value in the cell by weights (length of time)
             //        ==> leads to negative usage values
             if (this.usage && relayState === 'ON') {
+                //logger.debug('relay is on and usage is logged');
                 // FIXME: is this correcter now?
                 // FIXME: EUsed sometimes < 0 why?
                 this.usage.logValue(ECMeter.getEUsed(this.usageMeterId));
@@ -170,9 +178,10 @@ class HourlyUsageBuckets {
             }
             // somehow count time while relay is on for scaling
             if (this.baseUsage) {
+                //logger.debug('baseusage is logged');
                 this.baseUsage.logValue(ECMeter.getELowVoltUse(this.usageMeterId));
             }
-            if (this.isNextHour(hour)) {
+            if (this.usage && this.baseUsage && this.isNextHour(hour)) {
                 this.usage.setNextMemory(hour);
                 this.baseUsage.setNextMemory(hour);
                 this.usageMeterId = ECMeter.setStart(this.usageMeterId);
@@ -195,6 +204,10 @@ class HourlyUsageBuckets {
         
         this.usage     = new SerializedHourlyUsageBuckets(h, f1);
         this.baseUsage = new SerializedHourlyUsageBuckets(h, f2);
+        const hour = new Date().getHours();
+        this.usage.setNextMemory(hour);
+        this.baseUsage.setNextMemory(hour);
+
         this.usageMeterId = ECMeter.setStart();
 
         // schedule a write every full hour, reset the meter and change to next day at 0:00

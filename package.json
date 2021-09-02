@@ -1,5 +1,5 @@
 {
-  "name": "Victron Terminal",
+  "name": "Victron_Terminal",
   "version": "0.1.0",
   "description": "Terminal control for Victron Battery management",
   "main": "bmv-terminal.js",
