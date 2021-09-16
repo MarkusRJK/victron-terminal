@@ -282,8 +282,9 @@ class ChargerOverheatProtection {
             // There is no obvious command to reset the MPPT charger and for now
             // it has to be done manually by pulling all fuses to fully disconnect
             // the charger.
-            // It is unclear whether switching on load would help.
-            //FIXME not good: if (this.config.alarmLevel === 2) this.switchLoad();
+            // Remove load until alarm is solved by disconnecting the MPPT charger.
+            // This prevents discharge of batteries.
+            if (this.config.alarmLevel === 2) this.removeLoad();
         }
         else this.alarm.clear(this.id + 4, true);
 

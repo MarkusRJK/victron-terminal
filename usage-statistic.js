@@ -33,11 +33,17 @@ class BucketsWithHistory {
     // \param index in [0; this.noOfBuckets]
     getAvgValue(index) {
         index = index % this.noOfBuckets;
+        // sum non-null values and count them
+        let counter = 0;
         let sum = this.buckets[index].reduce(function(acc, curVal) {
-            acc += curVal;
+            if (curVal) {
+                acc += curVal;
+                ++counter;
+            }
             return acc;
         }, 0);
-        return sum / this.memory;
+        if (!counter) logger.debug('BucketsWithHistory::getAvgValue array empty');
+        return sum / (counter ? counter : this.memory);
     }
 
     initBuckets(v) {
@@ -90,7 +96,12 @@ class SerializedHourlyUsageBuckets extends BucketsWithHistory {
 
     writeData() {
         logger.trace('SerializedHourlyUsageBuckets::writeData');
-        let jData = JSON.stringify(this.buckets);
+
+        let jData = JSON.stringify(
+            this.buckets.map((b, index) => {
+                return b.map((x, i) => x.toFixed(2));
+            }));
+        
         logger.info('SerializedHourlyUsageBuckets::writeData - Writing usage data to file ' + this.file);
         let usageFile = fs.createWriteStream(this.file, {flags: 'w'});
         usageFile.write(jData);
@@ -154,7 +165,7 @@ class HourlyUsageBuckets {
         const currHour = this.baseUsage.getCurrentHour();
         let value = (hour > currHour
                      || (hour === 0 && currHour === 23));
-        logger.debug('isNextHour: hour = ' + hour + ' this.hour = ' + currHour);
+        //logger.debug('isNextHour: hour = ' + hour + ' this.hour = ' + currHour);
         if (value) logger.debug('isNextHour: true');
         return value;
     }
@@ -163,7 +174,7 @@ class HourlyUsageBuckets {
         try {
             // FIXME: some initial huge values
             // FIXME: no progressing into next array field
-            logger.debug('HourlyUsageBuckets::logUsage'); // FIXME: revert to trace
+            logger.trace('HourlyUsageBuckets::logUsage');
             const hour = new Date(timeStamp).getHours();
             // FIXME: only log the EUsed value if the relay is on and only for the time
             //        it is on. If relay not on for the full hour, scale usage to full hour

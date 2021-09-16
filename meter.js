@@ -225,13 +225,21 @@ class EnergyAndChargeMeter extends Meter {
         if (this.IPv < 0) this.meter.EWMs.loss1 += -this.UPv * this.IPv * timeDiff;
 
         if (this.RState === 'ON') {
-            let EdirectUse = this.UBat * (this.IPv - IBat) * timeDiff;
+            // from the previous if-statement: IBat = (this.IBat > 0 ? this.IBat : 0)
+            // IBat > 0 ==> charging ==> IPv > IBat
+            let EdirectUse = this.UBat * Math.max(this.IPv - IBat, 0) * timeDiff;
+            // FIXME: check the following events:
+            // FIXME: implement that IPv is in sync with IBat (different measurements
+            //        from different devices => avg, min or max on both)
+            if (this.IPv < IBat) logger.fatal("IPv < IBat: " + this.IPv + ", " + IBat);
             this.meter.EWMs.directUse  += EdirectUse;
             this.meter.EWMs.useWhileOn += EdirectUse - Edrawn;
             this.meter.onTime          += timeDiff;
         }
         else
-            this.meter.EWMs.directUse += this.UBat * Math.min(this.IPv,-this.ILoad) * timeDiff;
+            // IPv occassionally is negative which does not make sense...
+            this.meter.EWMs.directUse +=
+                 this.UBat * Math.min(Math.max(0, this.IPv), Math.max(0, -this.ILoad)) * timeDiff;
         // logger.debug(this.meter.EWMs.directUse + ' ' + this.meter.EWMs.absorbed  + ' ' + this.meter.EWMs.drawn +
         //           ' ' + this.meter.EWMs.loss1 + ' ' + this.meter.EWMs.loss2 + ' ' +
         //           this.meter.CAMs.absorbed  + ' ' + this.meter.CAMs.drawn);
@@ -254,7 +262,7 @@ class EnergyAndChargeMeter extends Meter {
         if (this.RState === 'ON')
             directUseLastMinutes = this.UBat * (this.IPv - IBat) * timeDiff;
         else
-            directUseLastMinutes = this.UBat * Math.min(this.IPv,-this.ILoad) * timeDiff;
+            directUseLastMinutes = this.UBat * Math.min(Math.max(0, this.IPv), Math.max(-this.ILoad))*timeDiff;
 
         return (this.meter.EWMs.directUse - subtract + directUseLastMinutes) * convMsToH;
     }
@@ -293,6 +301,7 @@ class EnergyAndChargeMeter extends Meter {
         if (this.IBat < 0) drawnLastMinutes = -this.UBat * this.IBat * timeDiff;
         return (this.meter.EWMs.drawn - subtract + drawnLastMinutes) * convMsToH;
     }
+    // FIXME: occasionally delivers negative values
     getEUsed(index) {
         let timeDiff = Date.now() - this.lastTime;
         let subtract = 0;
@@ -304,9 +313,8 @@ class EnergyAndChargeMeter extends Meter {
         let usedLastMinutes = 0;
         if (this.RState === 'ON') {
             let IPv        = Math.max(this.IPv, 0);
-            let IBat       = (this.IBat > 0 ? this.IBat : 0);
             // IPv < IBat would mean charge current is more than supplied by PV
-            let EdirectUse = this.UBat * (IPv - IBat) * timeDiff;
+            let EdirectUse = this.UBat * (IPv - Math.max(this.IBat, 0)) * timeDiff;
             let Edrawn     = (this.IBat < 0 ? this.UBat * this.IBat * timeDiff : 0);
             usedLastMinutes = EdirectUse - Edrawn; // yes: - Edrawn because this.IBat < 0
         }

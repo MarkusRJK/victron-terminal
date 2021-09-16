@@ -16,7 +16,7 @@
             "whenCurrentBelow" : 2,
             "note_maxVoltage"  : "lead accu: float-charge voltage = 2.23V/cell => 13.38V",
             "maxVoltage"       : 13.5,
-            "note_current"     : "currents are per accu, the current feed in is halt the total, i.e. for 2 batteries", 
+            "note_current"     : "currents are per accu, the current feed in is half the total, i.e. for 2 batteries", 
             "whenCurrentAbove" : 6
         },
         "BatteryProtectionHighPriority" : {
@@ -30,7 +30,7 @@
             "whenCurrentBelow" : 2,
             "note_maxVoltage"  : "lead accu: end-of-charge voltage = 2.42V/cell => 14.52V",
             "maxVoltage"       : 14.4,
-            "note_current"     : "currents are per accu, the current feed in is halt the total, i.e. for 2 batteries", 
+            "note_current"     : "currents are per accu, the current feed in is half the total, i.e. for 2 batteries", 
             "whenCurrentAbove" : 3
         },
         "ChargerProtectionLowPriority" : {
@@ -78,10 +78,10 @@
             "whenCurrentAbove" : 16.5
         },
         "ChargerOverheatProtectionHighPriority" : {
-            "note"             : "occassionally the charger decides to discharge the battery (I < 0), while V > maxVoltage",
+            "note"             : "occassionally the charger decides to discharge the battery (I <= 0), while V > maxVoltage",
             "alarmLevel"       : 2,
             "maxVoltage"       : 32,
-            "whenCurrentBelow" : -0.001
+            "whenCurrentBelow" : 0
         },
         "BatteryProtection" : {
             "note"             : "Remove load if one of the accus below minAccuVoltage or PV voltage < voltage of batteries in series plus min. diff for charge",

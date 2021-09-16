@@ -769,9 +769,8 @@ class VEdeviceSerialAccu extends VEdeviceClass {
         //      return bottomSOC;
         // }});
 
-        // FIXME: for debugging of any relay state changes that were 
-        //        initiated by BMV itself without involvement of this code
-        this.registerComponent('Relay'); // create Relay object
+        // example how to create logging for any state change in cache
+        // using on function:
         this.cache.relayState.on.push(
             ((newValue, oldValue, packageArrivalTime, key) => {
                 logger.fatal('relayState change from ' + oldValue + ' to ' + newValue);
