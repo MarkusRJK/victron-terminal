@@ -1,6 +1,6 @@
 // Battery Management System (BMS)
 
-var VEdeviceClass = require( 've_bms_forecast' ).VictronEnergyDevice;
+var VEdeviceClass = require( 'victron-server' ).VictronEnergyDevice;
 const interpolate = require('everpolate').linear;
 var fs = require('fs');
 const Math = require('mathjs');
@@ -771,6 +771,7 @@ class VEdeviceSerialAccu extends VEdeviceClass {
 
         // example how to create logging for any state change in cache
         // using on function:
+        this.registerComponent('Relay'); // ensure relay cache entry exists
         this.cache.relayState.on.push(
             ((newValue, oldValue, packageArrivalTime, key) => {
                 logger.fatal('relayState change from ' + oldValue + ' to ' + newValue);
