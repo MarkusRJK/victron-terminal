@@ -1,11 +1,17 @@
 // Battery Management System (BMS)
 
+// Verbrauch Inverter:
+// In Netzbetrieb-vor-Batterie (0) zieht der Inverter:
+// ca 200mA von der Batterie bei Netzversorgung
+// ca 2.4A von der Batterie bei Batterieversorgung (ohne Last)
+
+
 var VEdeviceClass = require( 'victron-server' ).VictronEnergyDevice;
 const interpolate = require('everpolate').linear;
 var fs = require('fs');
 const Math = require('mathjs');
 const MPPTclient = require('tracer').MPPTDataClient;
-const Alarms = require('./alarms').Alarms;
+const alarm = require('./alarms').Alarms;
 const FlowProtection = require('./protection.js').FlowProtection;
 const BatteryProtection = require('./protection.js').BatteryProtection;
 const ChargerOverheatProtection = require('./protection.js').ChargerOverheatProtection;
@@ -15,10 +21,14 @@ const ECMeter = require( './meter' ).EnergyAndChargeMeter;
 const PVInputFromIrradianceML = require( './forecast' ).PVInputFromIrradianceML;
 var forecast = require( './forecast' );
 const UsageBuckets = require('./usage-statistic').HourlyUsageBuckets;
+const MonitoredSwitch = require('./switch.js').MonitoredSwitch;
 
 
 let mppt = new MPPTclient(0); // poking in intervals done below
-const logger = log4js.getLogger();
+const logger = log4js.getLogger('silent');
+
+const tenMinutes = 600000; // 1000 * 60 * 10;
+setInterval(ECMeter.writeData.bind(ECMeter), tenMinutes);
 
 // extend standard Array by unique function
 Array.prototype.unique = function() {
@@ -829,7 +839,7 @@ class BMS extends VEdeviceSerialAccu {
         this.lowerFloatC   = null;
         this.upperFloatC   = null;
 
-        this.alarms                      = null;
+        //this.alarms                      = null;
         this.bottomBattProtectionLP      = null;
         this.bottomBattProtectionHP      = null;
         this.topBattProtectionLP         = null;
@@ -839,7 +849,7 @@ class BMS extends VEdeviceSerialAccu {
         this.chargerLoadProtectionLP     = null;
         this.chargerLoadProtectionHP     = null;
         this.chargerOverheatProtectionHP = null;
-        this.deviceProtection            = new DeviceProtection(this);
+        this.deviceProtection            = null;
         this.usageBuckets                = null;
 
         this.tracerInterval = 2000;
@@ -909,7 +919,7 @@ class BMS extends VEdeviceSerialAccu {
         logger.debug("BMS::stopPolling");
         clearInterval(this.interval);
         if (this.pvInput) this.pvInput.terminate();
-        this.alarms.terminate();
+        alarm.terminate();
 
         ECMeter.terminate(); // write out meter data
 
@@ -940,28 +950,28 @@ class BMS extends VEdeviceSerialAccu {
             logger.error(`Cannot read: ${filename} (${err.code === 'ENOENT' ? 'does not exist' : 'is not readable'})`);
         }
 
-        this.readChargingConfig();
-        this.alarms = new Alarms();
-        this.alarms.parseConfig(this.appConfig);
+        this.parseChargingConfig();
+        //this.alarms = new Alarms();
+        alarm.parseConfig(this.appConfig);
         this.usageBuckets = new UsageBuckets();
         this.usageBuckets.parseConfig(this.appConfig);
-        this.readProtectionConfig();
-        this.readTracerConfig();
-        this.readOpenWeatherConfig();
+        this.parseProtectionConfig();
+        this.parseTracerConfig();
+        this.parseOpenWeatherConfig();
     }
 
-    readChargingConfig() {
+    parseChargingConfig() {
         let c = null;
         if ('Charging' in this.appConfig) {
-            logger.info("BMS::readChargingConfig - reading Charging");
+            logger.info("BMS::parseChargingConfig - reading Charging");
             c = this.appConfig['Charging'];
-        } else throw 'BMS::readChargingConfig - no charge characteristics defined';
+        } else throw 'BMS::parseChargingConfig - no charge characteristics defined';
 
         let fc = null;
         if ('floatcharge' in c) {
-            logger.info("BMS::readChargingConfig - reading floatcharge");
+            logger.info("BMS::parseChargingConfig - reading floatcharge");
             fc = c['floatcharge'];
-        } else throw 'BMS::readChargingConfig - no floatcharge characteristics defined';
+        } else throw 'BMS::parseChargingConfig - no floatcharge characteristics defined';
 
         // The measured Voltage in this process nominal 12 V for the upper and nominal 12 V
         // for the lower pack. The measured current splits across all accumulators, the
@@ -971,9 +981,9 @@ class BMS extends VEdeviceSerialAccu {
         
         let rc = null;
         if ('restingCharge' in c) {
-            logger.info("BMS::readChargingConfig - reading restingCharge");
+            logger.info("BMS::parseChargingConfig - reading restingCharge");
             rc = c['restingCharge'];
-        } else throw 'BMS::readChargingConfig - no restingCharge characteristics defined';
+        } else throw 'BMS::parseChargingConfig - no restingCharge characteristics defined';
 
         this.lowerRestingC = new RestingCharacteristic(rc);
         this.upperRestingC = new RestingCharacteristic(rc);
@@ -982,112 +992,158 @@ class BMS extends VEdeviceSerialAccu {
         this.upperDischargeC = new RestingCharacteristic(rc);
     }
 
-    readProtectionConfig() {
+    parseProtectionConfig() {
+        let monitoredSwitch = new MonitoredSwitch(this, 30); // FIXME: set proper time
+
         let p = null;
         if ('Protection' in this.appConfig) {
-            logger.info("BMS::readProtectionConfig - reading Protection");
+            logger.info("BMS::parseProtectionConfig - reading Protection");
             p = this.appConfig['Protection'];
-        } else throw 'BMS::readProtectionConfig - no Protection section defined';
-        
+        } else throw 'BMS::parseProtectionConfig - no Protection section defined';
+
+        if ('DeviceProtectionHighPriority' in p)
+            this.deviceProtection = new DeviceProtection('Device Protection', p.DeviceProtectionHighPriority, monitoredSwitch);
+
         if ('BatteryProtection' in p)
-            this.batteryProtection = new BatteryProtection(p.BatteryProtection, this);
-        else throw 'BMS::readProtectionConfig - no BatteryProtection section defined';
+            this.batteryProtection = new BatteryProtection(9, 'Battery Protection', p.BatteryProtection, monitoredSwitch);
+        else throw 'BMS::parseProtectionConfig - no BatteryProtection section defined';
 
         if ('BatteryProtectionLowPriority' in p) {
-            this.bottomBattProtectionLP = new FlowProtection(0, 'Bottom battery' , p.BatteryProtectionLowPriority, this);
-            this.topBattProtectionLP    = new FlowProtection(2, 'Top battery' , p.BatteryProtectionLowPriority, this);
+            this.bottomBattProtectionLP = new FlowProtection(1, 'Bottom battery' , p.BatteryProtectionLowPriority, monitoredSwitch);
+            this.topBattProtectionLP    = new FlowProtection(2, 'Top battery' , p.BatteryProtectionLowPriority, monitoredSwitch);
         }
-        else throw 'BMS::readProtectionConfig - no BatteryProtectionLowPriority section defined';
+        else throw 'BMS::parseProtectionConfig - no BatteryProtectionLowPriority section defined';
         
         if ('BatteryProtectionHighPriority' in p) {
-            this.bottomBattProtectionHP = new FlowProtection(1, 'Bottom battery' , p.BatteryProtectionHighPriority, this);
-            this.topBattProtectionHP    = new FlowProtection(3, 'Top battery' , p.BatteryProtectionHighPriority, this);
+            this.bottomBattProtectionHP = new FlowProtection(1, 'Bottom battery' , p.BatteryProtectionHighPriority, monitoredSwitch);
+            this.topBattProtectionHP    = new FlowProtection(3, 'Top battery' , p.BatteryProtectionHighPriority, monitoredSwitch);
         }
-        else throw 'BMS::readProtectionConfig - no BatteryProtectionHighPriority section defined';
+        else throw 'BMS::parseProtectionConfig - no BatteryProtectionHighPriority section defined';
 
         if ('ChargerProtectionLowPriority' in p)
-            this.chargerProtectionLP = new FlowProtection(4, 'Charger' , p.ChargerProtectionLowPriority, this);
-        else throw 'BMS::readProtectionConfig - no ChargerProtectionLowPriority section defined';
+            this.chargerProtectionLP = new FlowProtection(4, 'Charger' , p.ChargerProtectionLowPriority, monitoredSwitch);
+        else throw 'BMS::parseProtectionConfig - no ChargerProtectionLowPriority section defined';
 
         if ('ChargerProtectionHighPriority' in p)
-            this.chargerProtectionHP = new FlowProtection(5, 'Charger' , p.ChargerProtectionHighPriority, this);
-        else throw 'BMS::readProtectionConfig - no ChargerProtectionHighPriority section defined';
+            this.chargerProtectionHP = new FlowProtection(5, 'Charger' , p.ChargerProtectionHighPriority, monitoredSwitch);
+        else throw 'BMS::parseProtectionConfig - no ChargerProtectionHighPriority section defined';
 
         if ('ChargerLoadProtectionLowPriority' in p)
-            this.chargerLoadProtectionLP = new FlowProtection(6, 'Charger load' , p.ChargerLoadProtectionLowPriority, this);
-        else throw 'BMS::readProtectionConfig - no ChargerLoadProtectionLowPriority section defined';
+            this.chargerLoadProtectionLP = new FlowProtection(6, 'Charger load' , p.ChargerLoadProtectionLowPriority, monitoredSwitch);
+        else throw 'BMS::parseProtectionConfig - no ChargerLoadProtectionLowPriority section defined';
 
         if ('ChargerLoadProtectionHighPriority' in p)
-            this.chargerLoadProtectionHP = new FlowProtection(7, 'Charger load' , p.ChargerLoadProtectionHighPriority, this);
-        else throw 'BMS::readProtectionConfig - no ChargerLoadProtectionHighPriority section defined';
+            this.chargerLoadProtectionHP = new FlowProtection(7, 'Charger load' , p.ChargerLoadProtectionHighPriority, monitoredSwitch);
+        else throw 'BMS::parseProtectionConfig - no ChargerLoadProtectionHighPriority section defined';
 
         if ('ChargerOverheatProtectionHighPriority' in p)
-            this.chargerOverheatProtectionHP = new ChargerOverheatProtection(8, 'Charger Overheat' , p.ChargerOverheatProtectionHighPriority, this);
-        else throw 'BMS::readProtectionConfig - no ChargerOverheatProtectionHighPriority section defined';
+            this.chargerOverheatProtectionHP = new ChargerOverheatProtection('Charger Overheat' , p.ChargerOverheatProtectionHighPriority, monitoredSwitch);
+        else throw 'BMS::parseProtectionConfig - no ChargerOverheatProtectionHighPriority section defined';
     }
 
-    readTracerConfig() {
+    parseTracerConfig() {
         let t = null;
         if ('Tracer' in this.appConfig) {
-            logger.info("BMS::readTracerConfig - reading Tracer");
+            logger.info("BMS::parseTracerConfig - reading Tracer");
             t = this.appConfig['Tracer'];
-        } else throw 'BMS::readTracerConfig - no Tracer section defined';
+        } else throw 'BMS::parseTracerConfig - no Tracer section defined';
 
         this.tracerInterval = 2000;
         if ('interval_sec' in t)
             this.tracerInterval = t.interval_sec * 1000;
-        else logger.warn(`BMS::readTracerConfig - no Tracer interval_sec defined - using default ${this.tracerInterval}`);
+        else logger.warn(`BMS::parseTracerConfig - no Tracer interval_sec defined - using default ${this.tracerInterval}`);
 
         if ('isMaster' in t)
             this.isMaster = t.isMaster;
-        else throw 'BMS::readTracerConfig - no Tracer isMaster defined';
+        else throw 'BMS::parseTracerConfig - no Tracer isMaster defined';
     }
 
-    readOpenWeatherConfig() {
+    parseOpenWeatherConfig() {
         let w = null;
         if ('openWeatherAPI' in this.appConfig) {
-            logger.info("BMS::readOpenWeatherConfig - reading openWeatherAPI");
+            logger.info("BMS::parseOpenWeatherConfig - reading openWeatherAPI");
             w = this.appConfig['openWeatherAPI'];
-        } else throw 'BMS::readOpenWeatherConfig - no openWeatherAPI section defined';
+        } else throw 'BMS::parseOpenWeatherConfig - no openWeatherAPI section defined';
 
         if ('key' in w && 'latitude' in w && 'longitude' in w)
             this.pvInput = new PVInputFromIrradianceML(ECMeter, w.latitude, w.longitude, w.key);
-        else throw 'BMS::readOpenWeatherConfig - key, latitude and longitude mandatory';
+        else throw 'BMS::parseOpenWeatherConfig - key, latitude and longitude mandatory';
     }
 
     protectFlows(time) {
         logger.trace("BMS::protectFlows");
+        // FIXME: referenceerrors in 1 3 and 9: now not existing
         try {
             if (this.bottomBattProtectionLP) {
                 this.bottomBattProtectionLP.setFlow(this.bottomFlow, time);
             }
+        }
+        catch(err) {
+            logger.error('BMS::protectFlows1 failed: ' + err);
+        }
+        try {
             if (this.bottomBattProtectionHP) {
                 this.bottomBattProtectionHP.setFlow(this.bottomFlow, time);
             }
+        }
+        catch(err) {
+            logger.error('BMS::protectFlows2 failed: ' + err);
+        }
+        try {
             if (this.topBattProtectionLP) {
                 this.topBattProtectionLP.setFlow(this.topFlow, time);
             }
+        }
+        catch(err) {
+            logger.error('BMS::protectFlows3 failed: ' + err);
+        }
+        try {
             if (this.topBattProtectionHP) {
                 this.topBattProtectionHP.setFlow(this.topFlow, time);
             }
+        }
+        catch(err) {
+            logger.error('BMS::protectFlows4 failed: ' + err);
+        }
+        try {
             if (this.chargerProtectionLP) {
                 this.chargerProtectionLP.setFlow(this.chargerFlow, time);
             }
+        }
+        catch(err) {
+            logger.error('BMS::protectFlows5 failed: ' + err);
+        }
+        try {
             if (this.chargerProtectionHP) {
                 this.chargerProtectionHP.setFlow(this.chargerFlow, time);
             }
+        }
+        catch(err) {
+            logger.error('BMS::protectFlows6 failed: ' + err);
+        }
+        try {
             if (this.chargerLoadProtectionLP) {
                 this.chargerLoadProtectionLP.setFlow(this.loadFlow, time);
             }
+        }
+        catch(err) {
+            logger.error('BMS::protectFlows7 failed: ' + err);
+        }
+        try {
             if (this.chargerLoadProtectionHP) {
                 this.chargerLoadProtectionHP.setFlow(this.loadFlow, time);
             }
+        }
+        catch(err) {
+            logger.error('BMS::protectFlows8 failed: ' + err);
+        }
+        try {
             if (this.chargerOverheatProtectionHP) {
                 this.chargerOverheatProtectionHP.setFlow(this.pvFlow, time);
             }
         }
         catch(err) {
-            logger.error('BMS::protectFlows failed: ' + err);
+            logger.error('BMS::protectFlows9 failed: ' + err);
         }
     }
 
@@ -1169,17 +1225,17 @@ class BMS extends VEdeviceSerialAccu {
                 states.isCharging = changedMap.get('MPPTisCharging').newValue;
         
             if (changedMap.has('MPPTisOverload'))
-                this.deviceProtection.setOverload(
-                    changedMap.get('MPPTisOverload').newValue, timeStamp);
+               this.deviceProtection.setOverload(
+                   changedMap.get('MPPTisOverload').newValue, timeStamp);
             if (changedMap.has('MPPTisShortcutLoad'))
-                this.deviceProtection.setShortcutLoad(
-                    changedMap.get('MPPTisShortcutLoad').newValue, timeStamp);
+               this.deviceProtection.setShortcutLoad(
+                   changedMap.get('MPPTisShortcutLoad').newValue, timeStamp);
             if (changedMap.has('MPPTisBatteryOverload'))
                 this.deviceProtection.setBatteryOverload(
                     changedMap.get('MPPTisBatteryOverload').newValue, timeStamp);
             if (changedMap.has('MPPTisFullIndicator'))
                 this.deviceProtection.setBatteryFull(
-                    changedMap.get('MPPTisFullIndicator').newValue, timeStamp);
+                   changedMap.get('MPPTisFullIndicator').newValue, timeStamp);
             if (changedMap.has('MPPTisOverDischarge'))
                 this.deviceProtection.setOverDischarge(
                     changedMap.get('MPPTisOverDischarge').newValue, timeStamp);
@@ -1188,10 +1244,10 @@ class BMS extends VEdeviceSerialAccu {
                     changedMap.get('MPPTbatteryTemperature').newValue, timeStamp);
             if (changedMap.has('alarmState'))
                 this.deviceProtection.setMonitorAlarm(
-                    changedMap.get('alarmState').newValue, timeStamp);
-            if (changedMap.has('alarmReason'))
-                this.deviceProtection.setAlarmReason(
-                    changedMap.get('alarmReason').newValue, timeStamp);
+                    changedMap.get('alarmState').newValue, 
+                    (changedMap.has('alarmReason')
+                     ? changedMap.get('alarmReason').newValue
+                     : null), timeStamp);
         }
         catch(err) {
             logger.error('BMS::setStates failed: ' + err);
@@ -1299,8 +1355,8 @@ class BMS extends VEdeviceSerialAccu {
     }
 
     listAlarms() {
-        if (this.alarms)
-            return this.alarms.persistPlain('\t');
+        if (alarm)
+            return alarm.persistPlain('\t');
         else return "\x1b[1m\x1b[31mNo Alarm History\x1b[0m";
     }
 

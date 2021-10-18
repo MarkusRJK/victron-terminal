@@ -1,4 +1,5 @@
 var fs = require('fs');
+//var audio = new Audio('HP-alarm.mp4');
 const logger = require('log4js').getLogger(); // getLogger('silent');
 
 const file = __dirname + '/alarms.json';
@@ -10,6 +11,14 @@ const cGreen  = "\x1b[1m\x1b[32m";
 const cYellow = "\x1b[33m";
 const cReset  = "\x1b[0m";
 
+
+function isToday(otherDate) {
+    const today = new Date();
+    const someDate = new Date(otherDate);
+    return someDate.getDate() == today.getDate() &&
+        someDate.getMonth() == today.getMonth() &&
+        someDate.getFullYear() == today.getFullYear();
+}
 
 // singleton class AlarmsImpl
 // TODO: implement new policy:
@@ -54,17 +63,19 @@ class AlarmsImpl {
 
         if (!a.isActive) levelTxt = '(';
         switch (a.level) {
-        case 0: levelTxt += 'low'; break;
-        case 1: levelTxt += 'medium'; break;
-        case 2: levelTxt += 'high'; break;
+        case 0: levelTxt += 'L'; break;
+        case 1: levelTxt += 'M'; break;
+        case 2: levelTxt += 'H'; break;
         }
         if (!a.isActive) levelTxt += ')';
-        let t = new Date(a.time).toTimeString().substring(0,5);
+        let t;
+        if (isToday(a.time)) t = new Date(a.time).toTimeString().substring(0,5);
+        else t = new Date(a.time).toISOString().substring(5,10);
         let action = a.action;
         if (a.level < this.actionLevel) action = '';
         let output = t + separator + levelTxt + separator + a.failure +
             separator + action + '\n';
-        //if (a.isActive) {h
+        //if (a.isActive) {
             switch(a.level) {
             case 1: return cYellow + output + cReset; break;
             case 2: return cRed + output + cReset; break;
@@ -75,6 +86,8 @@ class AlarmsImpl {
     }
 
     // \param separator is ',' for CSV, default is tab
+    // FIXME: put persistance into class extension to facilitate either terminal
+    //        or web output
     persistPlain(separator) {
         if (! separator) separator = '\t';
 
@@ -102,8 +115,7 @@ class AlarmsImpl {
     //           last 5 min
     raise(id, alevel, failureText, actionText, eventTime) {
         logger.trace('AlarmsImpl::raise(' + id + ', ' + alevel + ')');
-        let now = Date.now();
-        if (! eventTime) eventTime = now;
+        if (! eventTime) eventTime = Date.now();
 
         let activeUnacknAlarms = this.alarmHistory.filter((a) => (a.isActive && !a.isAckn));
         // if unacknowledged alarms of same id exist then return
@@ -111,13 +123,16 @@ class AlarmsImpl {
             //logger.info('Alarm ' + id + ' already entered');
             return 0; // already entered
         }
-        const fiveMinInMs = 300000; // = 5 * 60 * 1000
-        // if any alarm with same id has been recent (within the last 5 min then return
-        if (this.alarmHistory.some((a) => (a.id === id && now - a.time <= fiveMinInMs))) {
-            // FIXME: also consider time - if two alarms too close, ignore second
-            logger.info('Alarm ' + id + ' entered within last 5 min');
-            return 0; // already entered
-        }
+        // FIXME: remove the following commented stuff. This is replaced by
+        //        the blackout time in class Monitor
+        // const fiveMinInMs = 300000; // = 5 * 60 * 1000
+        // // if any alarm with same id has been recent (within the last 5 min then return
+        // if (this.alarmHistory.some((a) => (a.id === id && eventTime - a.time <= fiveMinInMs))) {
+        //     // FIXME: also consider time - if two alarms too close, ignore second
+        //     // FIXME: this warning pops up after alarm is cleared???
+        //     logger.info('Alarm ' + id + ' entered within last 5 min');
+        //     return 0; // already entered
+        // }
         let alarm = { time     : eventTime,
                       id       : id,
                       level    : alevel,
@@ -125,10 +140,11 @@ class AlarmsImpl {
                       action   : actionText,
                       isAckn   : false,
                       isActive : true,
-                      isAudible: (alevel >= 1)
+                      isAudible: (alevel >= 2)
                     };
         this.alarmHistory.unshift(alarm);
         this.reduce();
+        //if (alarm.isAudible) audio.play();
         // log ALARMs as fatal so they are always in the log
         logger.fatal("ALARM: " + JSON.stringify(alarm));
         return 1;
@@ -156,10 +172,11 @@ class AlarmsImpl {
         const i = this.alarmHistory.findIndex((element) => (element.id === id));
         if (i < 0 || i >= this.alarmHistory.length) return;
         if (force || this.alarmHistory[i].isAckn) {
-            if (this.alarmHistory[i].isActive !== false)
-                logger.fatal("ALARM cleared: " + JSON.stringify(this.alarmHistory[i]));
+            let isActive = this.alarmHistory[i].isActive !== false;
             this.alarmHistory[i].isActive  = false;
             this.alarmHistory[i].isAudible = false;
+            if (isActive)
+                logger.fatal("ALARM cleared: " + JSON.stringify(this.alarmHistory[i]));
         }
     }
 
@@ -170,6 +187,13 @@ class AlarmsImpl {
     isAnyActive() {
         return this.alarmHistory.some(a => a.isActive);
     }
+
+    isActive(id) {
+        const e = this.alarmHistory.find((element) => element.id === id);
+        if (e) return e.isActive;
+        else return false;
+    }
+
 }
 
 
@@ -252,4 +276,4 @@ class Alarms {
     }
 }
 
-module.exports.Alarms = Alarms;
+module.exports.Alarms = new Alarms();

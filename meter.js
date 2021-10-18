@@ -4,9 +4,12 @@ var fs = require('fs');
 const logger = require('log4js').getLogger();
 
 const file = __dirname + '/meter.json';
+const EdecimalPlace = 4; // number of decimal places for Energy
+const CdecimalPlace = 4; // number of decimal places for Capacity
 
 // get forecast every hour: 1000 * 60 * 60 = 3600000
-const convMsToH = 1.0 / (1000 * 60 * 60);
+const msInHour  = 1000 * 60 * 60;
+const convMsToH = 1.0 / msInHour;
 
 
 // \detail A metering object that stores several intermediate sets of start points.
@@ -49,6 +52,7 @@ class Meter {
         //     lowVoltUse: this.EWMs.lowVoltUse,
         //     useWhileOn: this.EWMs.useWhileOn,
         //     onTime:     this.onTime,
+        //     recordTime: this.recordTime,
         //     absorbed:   this.EWMs.absorbed,
         //     drawn:      this.EWMs.drawn,
         //     loss1:      this.EWMs.loss1,
@@ -62,9 +66,10 @@ class Meter {
 class EnergyAndChargeMeter extends Meter {
     constructor() {
         super();
-        logger.trace('EnergyAndChargeMeter::constructor');
-
         if(! EnergyAndChargeMeter.instance){
+            // trace inside to show that only one EnergyAndChargeMeter is constructed
+            logger.trace('EnergyAndChargeMeter::constructor');
+
             this.resetAccumulations();
             this.readData();
             this.setFlows(0, 0, 0, 0, 0, 'OFF', 0);
@@ -79,7 +84,11 @@ class EnergyAndChargeMeter extends Meter {
     resetAccumulations() {
         logger.trace('EnergyAndChargeMeter::resetAccumulations');
         this.meter = {
+            // onTime measures the time while the relay is 'ON' in ms
             onTime:         0,
+            // recordTime measures the time of the recording of values
+            // in ms e.g. between setStart()
+            recordTime:     0,
             // E = Energy: is in Watt milliseconds - needs to be converted to Wh
             // lowVoltUse is fully contained in directUse but recorded
             // separate as a constant draw of energy
@@ -113,8 +122,12 @@ class EnergyAndChargeMeter extends Meter {
 
     getObjectClone() {
         logger.debug('EnergyAndChargeMeter::getObjectClone'); // FIXME: revert to trace
+        // onTime is the time when the relay was on while
+        // recordTime is the time during which this "recording" was done.
+        // TODO: need recordTime!!
         return {
             onTime:         this.meter.onTime,
+            recordTime:     this.meter.recordTime,
             EWMs: {
                 directUse:  this.meter.EWMs.directUse,
                 lowVoltUse: this.meter.EWMs.lowVoltUse,
@@ -142,7 +155,7 @@ class EnergyAndChargeMeter extends Meter {
             this.ILoad  = ILoad;
             this.IBat   = IBat;
             this.RState = relayState;
-            
+
             if (time !== 0) this.accumulate(time);
             
             this.lastTime = time;
@@ -154,14 +167,17 @@ class EnergyAndChargeMeter extends Meter {
 
     accumulate(time) {
         logger.trace('EnergyAndChargeMeter::accumulate');
+
         if (!this.lastTime) {
             this.lastTime = time;
             logger.info('EnergyAndChargeMeter::accumulate: skip first time');
             return;
         }
-        let timeDiff = time - this.lastTime;
-        
-        // E = Energy
+        let timeDiff = time - this.lastTime; // in milliseconds
+        // console.log('time:     ' + time);
+        // console.log('lasttime: ' + this.lastTime);
+
+        // E = Energy, ILoad < 0!
         this.meter.EWMs.lowVoltUse += -this.UBat * this.ILoad * timeDiff;
         // logger.debug(this.IBat + ' ' + this.UBat  + ' ' + this.IPv +
         //           ' ' + this.UPv + ' ' +
@@ -205,7 +221,7 @@ class EnergyAndChargeMeter extends Meter {
         // > 0  && on:     IPv-IBat        IBat      0      (UPv-UBat)*IBat  UBat * IBat
         let C      = this.IBat * timeDiff;
         let IBat   = this.IBat;
-        let Edrawn = this.UBat * C;
+        let Edrawn = this.UBat * C; // FIXME: rename to EBat
         if (this.IBat > 0) { // charging
             this.meter.CAMs.absorbed      += C;
             this.meter.CAMs.level         += C;
@@ -216,7 +232,10 @@ class EnergyAndChargeMeter extends Meter {
         } else {
             IBat = 0;
             this.meter.CAMs.drawn         += -C; // drawn ampere hours / convMsToH
-            this.meter.CAMs.level         +=  C * this.meter.CAMs.absorbed / this.meter.CAMs.drawn;
+            this.meter.CAMs.level         += C * 
+                (this.meter.CAMs.drawn > 100 * msInHour 
+                 ? this.meter.CAMs.absorbed / this.meter.CAMs.drawn 
+                 : 1);
             this.meter.EWMs.drawn         += -Edrawn; // drawn energy / convMsToH
             this.meter.EWMs.loss2         += -Edrawn;
         }
@@ -224,6 +243,7 @@ class EnergyAndChargeMeter extends Meter {
         // over PV panels too late, or discharges on purpose over PV panels
         if (this.IPv < 0) this.meter.EWMs.loss1 += -this.UPv * this.IPv * timeDiff;
 
+        this.meter.recordTime += timeDiff;
         if (this.RState === 'ON') {
             // from the previous if-statement: IBat = (this.IBat > 0 ? this.IBat : 0)
             // IBat > 0 ==> charging ==> IPv > IBat
@@ -231,15 +251,27 @@ class EnergyAndChargeMeter extends Meter {
             // FIXME: check the following events:
             // FIXME: implement that IPv is in sync with IBat (different measurements
             //        from different devices => avg, min or max on both)
-            if (this.IPv < IBat) logger.fatal("IPv < IBat: " + this.IPv + ", " + IBat);
+            // NOTE: IPv < IBat happens indeed for short periods of 1-2 sec.
+            if (this.IPv < IBat) {
+                logger.fatal("IPv < IBat: " + this.IPv + ", " + IBat);
+            }
+                                   
             this.meter.EWMs.directUse  += EdirectUse;
+            // FIXME: differentiate whether IBat > 0 or < 0
             this.meter.EWMs.useWhileOn += EdirectUse - Edrawn;
             this.meter.onTime          += timeDiff;
         }
-        else
+        else {
             // IPv occassionally is negative which does not make sense...
             this.meter.EWMs.directUse +=
-                 this.UBat * Math.min(Math.max(0, this.IPv), Math.max(0, -this.ILoad)) * timeDiff;
+                this.UBat * Math.min(Math.max(0, this.IPv), Math.max(0, -this.ILoad)) * timeDiff;
+            // FIXME: for meter-test.js
+            // console.log(this.meter.EWMs.directUse);
+            // console.log(this.UBat);
+            // console.log(this.IPv);
+            // console.log(this.ILoad);
+            // console.log(timeDiff);
+        }
         // logger.debug(this.meter.EWMs.directUse + ' ' + this.meter.EWMs.absorbed  + ' ' + this.meter.EWMs.drawn +
         //           ' ' + this.meter.EWMs.loss1 + ' ' + this.meter.EWMs.loss2 + ' ' +
         //           this.meter.CAMs.absorbed  + ' ' + this.meter.CAMs.drawn);
@@ -260,9 +292,9 @@ class EnergyAndChargeMeter extends Meter {
         let IBat = (this.IBat > 0 ? this.IBat : 0);
 
         if (this.RState === 'ON')
-            directUseLastMinutes = this.UBat * (this.IPv - IBat) * timeDiff;
+            directUseLastMinutes = this.UBat * Math.max(0, this.IPv - IBat) * timeDiff;
         else
-            directUseLastMinutes = this.UBat * Math.min(Math.max(0, this.IPv), Math.max(-this.ILoad))*timeDiff;
+            directUseLastMinutes = this.UBat * Math.min(Math.max(0, this.IPv), Math.max(0, -this.ILoad))*timeDiff;
 
         return (this.meter.EWMs.directUse - subtract + directUseLastMinutes) * convMsToH;
     }
@@ -389,23 +421,41 @@ class EnergyAndChargeMeter extends Meter {
         return (this.meter.CAMs.level - subtract + absorbedLastMinutes - drawnLastMinutes)
             * convMsToH;
     }
+    getOnTimeInH(index) {
+        let timeDiff = Date.now() - this.lastTime;
+        let subtract = 0;
+        if (typeof index !== 'undefined' && index !== null &&
+            (this.MeterStarts.has(index))) subtract = this.MeterStarts.get(index).onTime;
+        else if (typeof index !== 'undefined')
+            logger.fatal('EnergyAndChargeMeter has no index ' + index);
+        return (this.meter.onTime - subtract + timeDiff);
+    }
+    getRecordTimeInH(index) {
+        let timeDiff = Date.now() - this.lastTime;
+        let subtract = 0;
+        if (typeof index !== 'undefined' && index !== null &&
+            (this.MeterStarts.has(index))) subtract = this.MeterStarts.get(index).recordTime;
+        else if (typeof index !== 'undefined')
+            logger.fatal('EnergyAndChargeMeter has no index ' + index);
+        return (this.meter.recordTime - subtract + timeDiff);
+    }
 
     writeData() {
         logger.trace('EnergyAndChargeMeter::writeData');
         // TODO: use parseFloat when reading as toFixed outputs strings
         let data = {
             time:         Date.now(),
-            directUse:    this.getEDirectUse().toFixed(4),
-            lowVoltUsed:  this.getELowVoltUse().toFixed(4),
-            useWhileOn:   this.getEUsed().toFixed(4),
-            absorbed:     this.getEAbsorbed().toFixed(4),
-            drawn:        this.getEDrawn().toFixed(4),
-            loss1:        this.getELoss1().toFixed(4),
-            loss2:        this.getELoss2().toFixed(4),
+            directUse:    this.getEDirectUse().toFixed(EdecimalPlace),
+            lowVoltUsed:  this.getELowVoltUse().toFixed(EdecimalPlace),
+            useWhileOn:   this.getEUsed().toFixed(EdecimalPlace),
+            absorbed:     this.getEAbsorbed().toFixed(EdecimalPlace),
+            drawn:        this.getEDrawn().toFixed(EdecimalPlace),
+            loss1:        this.getELoss1().toFixed(EdecimalPlace),
+            loss2:        this.getELoss2().toFixed(EdecimalPlace),
 
-            AhAbsorbed:   this.getCAbsorbed().toFixed(4),
-            AhDrawn:      this.getCDrawn().toFixed(4),
-            AhLevel:      this.getCLevel().toFixed(4),
+            AhAbsorbed:   this.getCAbsorbed().toFixed(CdecimalPlace),
+            AhDrawn:      this.getCDrawn().toFixed(CdecimalPlace),
+            AhLevel:      this.getCLevel().toFixed(CdecimalPlace),
 
             kWhHarvested: this.toEuroInclVAT(this.getEUsed()).toFixed(2)
         };
@@ -423,22 +473,23 @@ class EnergyAndChargeMeter extends Meter {
             let meterObj = JSON.parse(data);
 
             // FIXME: do a little of read resilience for other readers too!!
+            // convert all read values in 'Wh' or 'Ah' back into 'Wms' and 'Ams' (msInHour)
             let directUse  = ('directUse' in meterObj && meterObj.directUse
-                              ? meterObj.directUse  : 0) / convMsToH;
+                              ? meterObj.directUse * msInHour  : 0);
             let lowVoltUse = ('lowVoltUse' in meterObj && meterObj.lowVoltUse
-                              ? meterObj.lowVoltUse : 0) / convMsToH;
+                              ? meterObj.lowVoltUse * msInHour : 0);
             let useWhileOn = ('useWhileOn' in meterObj && meterObj.useWhileOn
-                              ? meterObj.useWhileOn : 0) / convMsToH;
+                              ? meterObj.useWhileOn * msInHour : 0);
             let absorbed   = ('absorbed' in meterObj && meterObj.absorbed
-                              ? meterObj.absorbed   : 0) / convMsToH;
+                              ? meterObj.absorbed * msInHour   : 0);
             let drawn      = ('drawn' in meterObj && meterObj.drawn
-                              ? meterObj.drawn      : 0) / convMsToH;
+                              ? meterObj.drawn * msInHour      : 0);
             let level      = ('level' in meterObj && meterObj.level
-                              ? meterObj.level      : 0) / convMsToH;
+                              ? meterObj.level * msInHour      : 0);
             let loss1      = ('loss1' in meterObj && meterObj.loss1
-                              ? meterObj.loss1      : 0) / convMsToH;
+                              ? meterObj.loss1 * msInHour      : 0);
             let loss2      = ('loss2' in meterObj && meterObj.loss2
-                              ? meterObj.loss2      : 0) / convMsToH;
+                              ? meterObj.loss2 * msInHour      : 0);
             this.meter.EWMs.directUse  = directUse;
             this.meter.EWMs.lowVoltUse = lowVoltUse;
             this.meter.EWMs.useWhileOn = useWhileOn;
@@ -447,8 +498,8 @@ class EnergyAndChargeMeter extends Meter {
             this.meter.EWMs.loss1      = loss1;
             this.meter.EWMs.loss2      = loss2;
 
-            absorbed = (meterObj.AhAbsorbed  ? meterObj.AhAbsorbed  : 0) / convMsToH;
-            drawn    = (meterObj.AhDrawn     ? meterObj.AhDrawn     : 0) / convMsToH;
+            absorbed = (meterObj.AhAbsorbed  ? meterObj.AhAbsorbed * msInHour : 0);
+            drawn    = (meterObj.AhDrawn     ? meterObj.AhDrawn * msInHour    : 0);
             this.meter.CAMs.absorbed  = absorbed;
             this.meter.CAMs.drawn     = drawn;
             this.meter.CAMs.level     = level;
@@ -465,8 +516,6 @@ class EnergyAndChargeMeter extends Meter {
     }
 }
 
+// FIXME: const should freeze the object?
 var meter = new EnergyAndChargeMeter();
-const tenMinutes = 600000; // 1000 * 60 * 10;
-setInterval(meter.writeData.bind(meter), tenMinutes);
-
 module.exports.EnergyAndChargeMeter = meter;

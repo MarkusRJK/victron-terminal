@@ -6,14 +6,13 @@ const logger = require('log4js').getLogger();
 
 const f1 = __dirname + '/usage.json';
 const f2 = __dirname + '/baseUsage.json';
-
+const minRecordingTime = 1 / 6; // 10 minutes
 
 class BucketsWithHistory {
     // \param memory is the number of days to keep in memory
     constructor(noOfBuckets, memory) {
         this.memory = memory; // memory/history per bucket
         this.noOfBuckets = noOfBuckets;
-        // array for "daysMemory" days, each day has 24 hours (buckets)
         this.buckets = null;
     }
 
@@ -21,8 +20,16 @@ class BucketsWithHistory {
         if (! this.buckets) throw 'BucketsWithHistory::set - no buckets';
         x = x % this.noOfBuckets;
         y = y % this.memory;
-        logger.trace('BucketsWithHistory::set(' + x + ', ' + y + ', ' + value + ')');
+        logger.trace('BucketsWithHistory::set(' + x + ', ' + y + ', ' + value + ')'); 
         this.buckets[x][y] = value;
+    }  
+
+    get(x, y) {
+        if (! this.buckets) throw 'BucketsWithHistory::get - no buckets';
+        x = x % this.noOfBuckets;
+        y = y % this.memory;
+        logger.trace('BucketsWithHistory::get(' + x + ', ' + y + ')');
+        return this.buckets[x][y];
     }  
 
     // \return first element in buckets[x] containing value
@@ -76,7 +83,7 @@ class SerializedHourlyUsageBuckets extends BucketsWithHistory {
     }
 
     setNextMemory(hour) {
-        logger.debug('SerializedHourlyUsageBuckets::setNextMemory(' + hour + ')');
+        logger.trace('SerializedHourlyUsageBuckets::setNextMemory(' + hour + ')');
         logger.debug('changing from hour ' + this.hour + ' to ' + hour);
         this.hour = hour;
         logger.debug('changing from currMem ' + this.currentMem);
@@ -94,6 +101,10 @@ class SerializedHourlyUsageBuckets extends BucketsWithHistory {
         this.set(this.hour, this.currentMem, value);
     }
 
+    getCurrentValue() {
+        return this.get(this.hour, this.currentMem);
+    }
+
     writeData() {
         logger.trace('SerializedHourlyUsageBuckets::writeData');
 
@@ -107,6 +118,7 @@ class SerializedHourlyUsageBuckets extends BucketsWithHistory {
         usageFile.write(jData);
     }
     
+    // FIXME: readData seems not to read back properly
     readData() {
         logger.trace('SerializedHourlyUsageBuckets::readData');
         let isFileRead = false;
@@ -147,6 +159,7 @@ class HourlyUsageBuckets {
         this.usage          = null;
         this.baseUsage      = null;
         this.usageMeterId   = 0;
+        this.hourlyId       = 0;
         //this.writeUsageTask = null;
         this.addWriteTask   = null;
     }
@@ -155,7 +168,9 @@ class HourlyUsageBuckets {
         //if (this.writeUsageTask) this.writeUsageTask.stop();
         clearInterval(this.addWriteTask);
         // FIXME: destroy() errors although api says that tasks have destroy()
-        //this.writeTask.destroy(); 
+        //this.writeTask.destroy();
+        
+        this.scaleToHour(); // scale currently metered values 
         if (this.usage) this.usage.terminate();
         if (this.baseUsage) this.baseUsage.terminate();
     }
@@ -168,6 +183,34 @@ class HourlyUsageBuckets {
         //logger.debug('isNextHour: hour = ' + hour + ' this.hour = ' + currHour);
         if (value) logger.debug('isNextHour: true');
         return value;
+    }
+
+    // scale any metered value to an hour, if the hour was not complete
+    scaleToHour() {
+        logger.debug('scaleToHour');
+        if (! this.usage || ! this.baseUsage) return;
+        // We want to store hourly based values e.g kWh,
+        // but if recording was not one full hour
+        // we need to scale it appropriately.
+
+        let v = this.usage.getCurrentValue();
+        let ot = ECMeter.getOnTimeInH(this.hourlyId);
+        // if ot < 10min, don't scale (too much noise)
+        // logger.debug('scaleToHour v : ' + v);
+        // logger.debug('scaleToHour ot: ' + ot);
+        if (ot < minRecordingTime)
+            this.usage.logValue(0);
+        else this.usage.logValue(v / ot);
+
+        v = this.baseUsage.getCurrentValue();
+        ot = ECMeter.getRecordTimeInH(this.hourlyId);
+        // logger.debug('scaleToHour v : ' + v);
+        // logger.debug('scaleToHour ot: ' + ot);
+        if (ot < minRecordingTime)
+            this.baseUsage.logValue(0);
+        else this.baseUsage.logValue(v / ot);
+        // start a new hour
+        this.hourlyId = ECMeter.setStart(this.hourlyId);
     }
 
     logUsage(relayState, timeStamp) {
@@ -184,15 +227,21 @@ class HourlyUsageBuckets {
                 //logger.debug('relay is on and usage is logged');
                 // FIXME: is this correcter now?
                 // FIXME: EUsed sometimes < 0 why?
-                this.usage.logValue(ECMeter.getEUsed(this.usageMeterId));
+                let v = ECMeter.getEUsed(this.usageMeterId);
+                this.usage.logValue(v);
                     //- ECMeter.getELowVoltUse(this.usageMeterId));
             }
             // somehow count time while relay is on for scaling
             if (this.baseUsage) {
                 //logger.debug('baseusage is logged');
-                this.baseUsage.logValue(ECMeter.getELowVoltUse(this.usageMeterId));
+                let v = ECMeter.getELowVoltUse(this.usageMeterId);
+                this.baseUsage.logValue(v);
             }
             if (this.usage && this.baseUsage && this.isNextHour(hour)) {
+
+                this.scaleToHour();
+                // FIXME: setNextMemory only move to next memory cell if scaleToHour did
+                //        not zero the value (because of too little ontime e.g.)
                 this.usage.setNextMemory(hour);
                 this.baseUsage.setNextMemory(hour);
                 this.usageMeterId = ECMeter.setStart(this.usageMeterId);
@@ -220,6 +269,7 @@ class HourlyUsageBuckets {
         this.baseUsage.setNextMemory(hour);
 
         this.usageMeterId = ECMeter.setStart();
+        this.hourlyId     = ECMeter.setStart();
 
         // schedule a write every full hour, reset the meter and change to next day at 0:00
         //                                   ┌────────────── second (optional)

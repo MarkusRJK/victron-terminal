@@ -17,7 +17,8 @@
             "note_maxVoltage"  : "lead accu: float-charge voltage = 2.23V/cell => 13.38V",
             "maxVoltage"       : 13.5,
             "note_current"     : "currents are per accu, the current feed in is half the total, i.e. for 2 batteries", 
-            "whenCurrentAbove" : 6
+            "whenCurrentAbove" : 6,
+            "durationActive"   : 300
         },
         "BatteryProtectionHighPriority" : {
             "note"             : "lead accus in parallel => 10.5V - 14.52V",
@@ -78,15 +79,39 @@
             "whenCurrentAbove" : 16.5
         },
         "ChargerOverheatProtectionHighPriority" : {
+            "id"               : 800,
             "note"             : "occassionally the charger decides to discharge the battery (I <= 0), while V > maxVoltage",
             "alarmLevel"       : 2,
-            "maxVoltage"       : 32,
-            "whenCurrentBelow" : 0
+            "minVoltage"       : 32,
+            "whenCurrentBelow" : 0.005,
+            "durationActive"   : 300
+        },
+        "DeviceProtectionHighPriority": {
+            "id"               : 0,
+            "timeIsFull"       : 1800,
+            "maxTemp"          : 40
         },
         "BatteryProtection" : {
-            "note"             : "Remove load if one of the accus below minAccuVoltage or PV voltage < voltage of batteries in series plus min. diff for charge",
+            "Description_1"    : "If pvVoltage is less than accu voltage in series plus minDiffForCharge then charging is over ==> remove load except if explicitely granted to discharge",
+            "Rule_1"           : "topVoltage + bottomVoltage + minDiffForCharge >= pvVoltage ==> remove load",
+
+            "Description_2"    : "If top accu voltage of accu serie drops below a minimum, sulfatisation starts and lifetime of top accu shortens.",
+            "Rule_2"           : "topVoltage < minAccuVoltage for durationActive seconds ==> remove load",
+
+            "Description_3"    : "If bottom accu voltage of accu serie drops below a minimum, sulfatisation starts and lifetime of bottom accu shortens.",
+            "Rule_3"           : "bottomVoltage < minAccuVoltage for durationActive seconds ==> remove load",
+
+            "Description_4"    : "If the voltage difference of bottom and top accu of the series is high, the balancer will get stressed. If the difference is cause by undervoltage then remove load, else switch load",
+            "Rule_4.1"         : "abs(bottomVoltage-topVoltage)>maxVoltDiff and min(topVoltage, bottomVoltage) < minAccuVoltage for durationActive seconds ==> remove load",
+            "Rule_4.2"         : "abs(bottomVoltage-topVoltage)>maxVoltDiff and max(topVoltage, bottomVoltage) > maxAccuVoltage for durationActive seconds ==> switch load",
+            "Rule_4.3"         : "abs(bottomVoltage-topVoltage)>maxVoltDiff for durationActive seconds (report alarm)",
+
+            "alarmLevel"       : 1,
+            "maxVoltDiff"      : 0.3,
             "minAccuVoltage"   : 12,
-            "minDiffForCharge" : 1
+            "maxAccuVoltage"   : 13.7,
+            "minDiffForCharge" : 1,
+            "durationActive"   : 300
         }
     },
     
