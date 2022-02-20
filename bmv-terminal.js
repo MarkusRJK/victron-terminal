@@ -346,7 +346,7 @@ function displayCurrentAndHistory() {
     term.moveTo(v1, h++, menu2);
     term.moveTo(v1, h++, menu3);
 
-    term.moveTo( 0 , 0 , "") ;
+    //term.moveTo( 0 , 0 , "") ;
 }
 
 function displayConfiguration() {
@@ -391,7 +391,7 @@ function displayConfiguration() {
     term.moveTo(v1, h++, menu2);
     term.moveTo(v1, h++, menu3);
 
-    term.moveTo( 0 , 0 , "") ;
+    //term.moveTo( 0 , 0 , "") ;
 }
 
 
@@ -422,7 +422,7 @@ function displayMPPT() {
     term.moveTo(v1, h++, menu2);
     term.moveTo(v1, h++, menu3);
 
-    term.moveTo( 0 , 0 , "") ;
+    //term.moveTo( 0 , 0 , "") ;
 }
 
 
@@ -637,11 +637,11 @@ term.on( 'key' , ( name , matches , data ) => {
         if (getValue('relayState') !== "OFF") relayOnOff = 1;
         if (relayOnOff == 1) {
             term.green('Switch relay off');
-            vedirect.setRelay(0);
+            vedirect.setRelay(0); // TODO: use switch.js
         }
         else {
             term.green('Switch relay on');
-            vedirect.setRelay(1);
+            vedirect.setRelay(1); // TODO: use switch.js
         }
     }
     else if ( name === 'S' )
